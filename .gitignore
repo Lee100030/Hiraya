@@ -1,0 +1,11 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.userosscache
+*.sln.docstates
+nupkg/
+*.nupkg
+project.lock.json
+artifacts/
