@@ -1,0 +1,53 @@
+@inject SessionService Session
+@inject IHirayaRepository Repository
+
+<h1>Payments</h1>
+<p class="muted">Balances for the selected child.</p>
+<FamilyChildPicker Changed="LoadAsync" />
+
+@if (rows is null)
+{
+    <FamilyState Mode="loading" />
+}
+else if (rows.Count == 0)
+{
+    <FamilyState Message="No payment records yet." />
+}
+else
+{
+    <div class="record-stack">
+    @foreach (var payment in rows)
+    {
+        var status = PaymentService.EffectiveStatus(payment);
+        <div class="mobile-card">
+            <strong>@FamilyPortal.PaymentLabel(status)</strong>
+            <p class="muted mb-0">
+                ₱@PaymentService.Remaining(payment).ToString("N0") remaining of ₱@payment.Amount.ToString("N0")
+            </p>
+            @if (PaymentService.DueLocal(payment) is { } due)
+            {
+                <p class="muted mb-0">Due @due.ToString("MMM d, yyyy")</p>
+            }
+        </div>
+    }
+    </div>
+}
+
+@code {
+    private List<Payment>? rows;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        if (Session.CurrentUser is null)
+            return;
+        var db = await Repository.LoadAsync();
+        var selected = Session.SelectedStudentId;
+        rows = PaymentService.Visible(db, Session.CurrentUser)
+            .Where(p => string.IsNullOrEmpty(selected) || PaymentService.ResolveStudentId(db, p) == selected)
+            .OrderByDescending(p => p.DueAt)
+            .Take(40)
+            .ToList();
+    }
+}

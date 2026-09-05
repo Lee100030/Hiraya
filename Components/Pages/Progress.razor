@@ -1,0 +1,424 @@
+@page "/progress"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject ProgressService ProgressApi
+@inject NavigationManager Nav
+
+@if (AppExperience.UseMobileUserShell(Session.CurrentUser))
+{
+    <MobileProgressView />
+}
+else
+{
+<h1>Progress</h1>
+<p class="muted">Structured learning notes with a change history. Parents only see published records.</p>
+
+@if (!Navigation.CanViewProgress(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status))
+    {
+        <p class="ok">@status</p>
+    }
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="text-danger">@error</p>
+    }
+
+    <div class="toolbar">
+        <input class="form-control" placeholder="Search student, area, or notes" @bind="query" @bind:event="oninput" />
+        <select class="form-select" @bind="studentFilter">
+            <option value="">All students</option>
+            @foreach (var student in filterStudents)
+            {
+                <option value="@student.StudentId">@StudentNames.Display(student)</option>
+            }
+        </select>
+        <select class="form-select" @bind="areaFilter">
+            <option value="">All areas</option>
+            @foreach (var area in ProgressAreas.All)
+            {
+                <option value="@area">@ProgressAreas.Label(area)</option>
+            }
+        </select>
+        <select class="form-select" @bind="statusFilter">
+            <option value="">All statuses</option>
+            @foreach (var value in ProgressStatuses.All)
+            {
+                @if (value != ProgressStatuses.Archived || canWrite)
+                {
+                    <option value="@value">@value</option>
+                }
+            }
+        </select>
+    </div>
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Student</th>
+                    <th>Period</th>
+                    <th>Area</th>
+                    <th>Rating</th>
+                    <th>Status</th>
+                    <th>Updated</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!Filtered.Any())
+                {
+                    <tr><td colspan="7" class="muted">No progress records match the current filters.</td></tr>
+                }
+                @foreach (var row in Filtered)
+                {
+                    <tr>
+                        <td>
+                            @row.StudentName
+                            <div class="muted">@row.ClassName</div>
+                        </td>
+                        <td>@(string.IsNullOrWhiteSpace(row.Item.Period) ? "—" : row.Item.Period)</td>
+                        <td>@ProgressAreas.Label(row.Item.Area)</td>
+                        <td>@ProgressRatings.Label(row.Item.Rating)</td>
+                        <td>@row.Item.Status</td>
+                        <td>@FormatWhen(row.Item.UpdatedAt ?? row.Item.CreatedAt)</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Select(row.Item)">History</button>
+                            @if (canWrite && row.Item.Status != ProgressStatuses.Archived)
+                            {
+                                <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Edit(row.Item)">Edit</button>
+                                @if (row.Item.Status == ProgressStatuses.Draft)
+                                {
+                                    <button class="btn btn-sm btn-primary" type="button" @onclick="() => PublishAsync(row.Item.ReportId)">Publish</button>
+                                }
+                                <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => ArchiveAsync(row.Item.ReportId)">Archive</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (selected != null)
+    {
+        <h2 class="mt-4">@StudentLabel(selected.StudentId) · timeline</h2>
+        <p class="muted">@ProgressAreas.Label(selected.Area) · @ProgressRatings.Label(selected.Rating) · @selected.Status</p>
+        <p>@selected.Evaluation</p>
+        @if (!string.IsNullOrWhiteSpace(selected.BehaviorReport))
+        {
+            <p><strong>Behavior:</strong> @selected.BehaviorReport</p>
+        }
+        @if (!string.IsNullOrWhiteSpace(selected.DevelopmentalReport))
+        {
+            <p><strong>Development:</strong> @selected.DevelopmentalReport</p>
+        }
+        @if (!string.IsNullOrWhiteSpace(selected.Remarks))
+        {
+            <p><strong>Remarks:</strong> @selected.Remarks</p>
+        }
+
+        <ol class="timeline">
+            @foreach (var entry in (selected.History ?? []).OrderByDescending(h => h.ChangedAt))
+            {
+                <li>
+                    <strong>@entry.Action</strong>
+                    <span class="muted"> · @UserLabel(entry.ChangedBy) · @FormatWhen(entry.ChangedAt)</span>
+                    <div>@entry.Summary</div>
+                </li>
+            }
+        </ol>
+
+        <h3 class="mt-3">Earlier records for this student</h3>
+        <ul class="plain-list">
+            @foreach (var item in ProgressService.Timeline(db, Session.CurrentUser!, selected.StudentId))
+            {
+                <li>
+                    <button class="btn btn-link" type="button" @onclick="() => Select(item)">
+                        @ProgressAreas.Label(item.Area) · @ProgressRatings.Label(item.Rating) · @item.Status · @FormatWhen(item.UpdatedAt ?? item.CreatedAt)
+                    </button>
+                </li>
+            }
+        </ul>
+    }
+
+    @if (canWrite)
+    {
+        <h2 class="mt-4">@(string.IsNullOrEmpty(form.ReportId) ? "Add progress record" : "Edit progress record")</h2>
+        <p class="muted">Publishing notifies the parent. Each save appends a history entry instead of silently overwriting.</p>
+        <EditForm Model="form" OnValidSubmit="SaveAsync">
+            <div class="form-grid">
+                <div>
+                    <label class="form-label">Student</label>
+                    <InputSelect class="form-select" @bind-Value="form.StudentId" @bind-Value:after="ApplyStudentDefaults">
+                        <option value="">Select student</option>
+                        @foreach (var student in writableStudents)
+                        {
+                            <option value="@student.StudentId">@StudentNames.Display(student)</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Class</label>
+                    <InputSelect class="form-select" @bind-Value="form.ClassId">
+                        <option value="">—</option>
+                        @foreach (var item in writableClasses)
+                        {
+                            <option value="@item.ClassId">@item.Name</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Period</label>
+                    <InputText class="form-control" @bind-Value="form.Period" placeholder="2025–2026 Q1" />
+                </div>
+                <div>
+                    <label class="form-label">Area</label>
+                    <InputSelect class="form-select" @bind-Value="form.Area">
+                        @foreach (var area in ProgressAreas.All)
+                        {
+                            <option value="@area">@ProgressAreas.Label(area)</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Rating</label>
+                    <InputSelect class="form-select" @bind-Value="form.Rating">
+                        @foreach (var rating in ProgressRatings.All)
+                        {
+                            <option value="@rating">@ProgressRatings.Label(rating)</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Save as</label>
+                    <InputSelect class="form-select" @bind-Value="form.Status">
+                        <option value="@ProgressStatuses.Draft">Draft</option>
+                        <option value="@ProgressStatuses.Published">Published</option>
+                    </InputSelect>
+                </div>
+                <div class="full">
+                    <label class="form-label">Evaluation</label>
+                    <InputTextArea class="form-control" rows="3" @bind-Value="form.Evaluation" />
+                </div>
+                <div class="full">
+                    <label class="form-label">Behavior</label>
+                    <InputTextArea class="form-control" rows="2" @bind-Value="form.BehaviorReport" />
+                </div>
+                <div class="full">
+                    <label class="form-label">Developmental</label>
+                    <InputTextArea class="form-control" rows="2" @bind-Value="form.DevelopmentalReport" />
+                </div>
+                <div class="full">
+                    <label class="form-label">Remarks</label>
+                    <InputTextArea class="form-control" rows="2" @bind-Value="form.Remarks" />
+                </div>
+            </div>
+            <div class="toolbar">
+                <button class="btn btn-primary" type="submit">Save</button>
+                @if (!string.IsNullOrEmpty(form.ReportId))
+                {
+                    <button class="btn btn-outline-secondary" type="button" @onclick="ClearForm">Cancel edit</button>
+                }
+            </div>
+        </EditForm>
+    }
+}
+}
+
+@code {
+    private HirayaDatabase? db;
+    private bool canWrite;
+    private string query = "";
+    private string studentFilter = "";
+    private string areaFilter = "";
+    private string statusFilter = "";
+    private string status = "";
+    private string error = "";
+    private ProgressReport? selected;
+    private ProgressSaveRequest form = NewForm();
+    private List<Student> filterStudents = [];
+    private List<Student> writableStudents = [];
+    private List<LearningClass> writableClasses = [];
+
+    private IEnumerable<(ProgressReport Item, string StudentName, string ClassName)> Filtered
+    {
+        get
+        {
+            if (db is null) return Array.Empty<(ProgressReport, string, string)>();
+            var q = query.Trim();
+            return ProgressService.Visible(db, Session.CurrentUser!)
+                .Where(r => string.IsNullOrEmpty(studentFilter) || r.StudentId == studentFilter)
+                .Where(r => string.IsNullOrEmpty(areaFilter) || r.Area == areaFilter)
+                .Where(r => string.IsNullOrEmpty(statusFilter) || r.Status == statusFilter)
+                .Select(r => (
+                    Item: r,
+                    StudentName: StudentLabel(r.StudentId),
+                    ClassName: string.IsNullOrWhiteSpace(r.ClassId)
+                        ? "—"
+                        : db.Classes.FirstOrDefault(c => c.ClassId == r.ClassId)?.Name ?? r.ClassId))
+                .Where(row =>
+                    string.IsNullOrEmpty(q) ||
+                    row.Item.Evaluation.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    row.Item.BehaviorReport.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    row.Item.Remarks.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    row.StudentName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    ProgressAreas.Label(row.Item.Area).Contains(q, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(row => row.Item.UpdatedAt ?? row.Item.CreatedAt);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        if (AppExperience.UseMobileUserShell(Session.CurrentUser))
+            return;
+
+        canWrite = Navigation.CanWriteProgress(Session.CurrentUser?.Role);
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        db = await Repository.LoadAsync();
+        var user = Session.CurrentUser!;
+        writableStudents = ProgressService.WritableStudents(db, user).ToList();
+        writableClasses = ProgressService.WritableClasses(db, user).ToList();
+        filterStudents = user.Role == UserRoles.Parent
+            ? db.Students.Where(s => s.ParentId == user.UserId).OrderBy(StudentNames.Display).ToList()
+            : writableStudents.Count > 0
+                ? writableStudents
+                : db.Students.OrderBy(StudentNames.Display).ToList();
+    }
+
+    private void Select(ProgressReport report) => selected = report;
+
+    private void Edit(ProgressReport report)
+    {
+        selected = report;
+        form = new ProgressSaveRequest
+        {
+            ReportId = report.ReportId,
+            StudentId = report.StudentId,
+            ClassId = report.ClassId,
+            Period = report.Period,
+            Area = string.IsNullOrWhiteSpace(report.Area) ? ProgressAreas.Overall : report.Area,
+            Rating = string.IsNullOrWhiteSpace(report.Rating) ? ProgressRatings.Developing : report.Rating,
+            Evaluation = report.Evaluation,
+            BehaviorReport = report.BehaviorReport,
+            DevelopmentalReport = report.DevelopmentalReport,
+            Remarks = report.Remarks,
+            Status = report.Status == ProgressStatuses.Published ? ProgressStatuses.Published : ProgressStatuses.Draft
+        };
+        error = "";
+        status = "";
+    }
+
+    private void ClearForm() => form = NewForm();
+
+    private void ApplyStudentDefaults()
+    {
+        if (db is null || string.IsNullOrWhiteSpace(form.StudentId))
+            return;
+        var enrollment = db.Enrollments.FirstOrDefault(e =>
+            e.StudentId == form.StudentId && EnrollmentStatuses.CountsTowardCapacity(e.Status));
+        if (enrollment != null)
+        {
+            if (string.IsNullOrWhiteSpace(form.ClassId))
+                form.ClassId = enrollment.ClassId;
+            if (string.IsNullOrWhiteSpace(form.Period))
+                form.Period = enrollment.Period;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            await ProgressApi.SaveAsync(form, Session.CurrentUser!);
+            status = form.Status == ProgressStatuses.Published
+                ? "Progress record saved and published."
+                : "Progress record saved as a draft.";
+            error = "";
+            ClearForm();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            status = "";
+        }
+    }
+
+    private async Task PublishAsync(string reportId)
+    {
+        try
+        {
+            await ProgressApi.PublishAsync(reportId, Session.CurrentUser!);
+            status = "Progress record published. The parent was notified.";
+            error = "";
+            await ReloadAsync();
+            if (selected?.ReportId == reportId)
+                selected = db?.Reports.FirstOrDefault(r => r.ReportId == reportId);
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            status = "";
+        }
+    }
+
+    private async Task ArchiveAsync(string reportId)
+    {
+        try
+        {
+            await ProgressApi.ArchiveAsync(reportId, Session.CurrentUser!);
+            status = "Progress record archived.";
+            error = "";
+            if (selected?.ReportId == reportId)
+                selected = null;
+            ClearForm();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            status = "";
+        }
+    }
+
+    private string StudentLabel(string studentId)
+    {
+        var student = db?.Students.FirstOrDefault(s => s.StudentId == studentId);
+        return student == null ? studentId : StudentNames.Display(student);
+    }
+
+    private string UserLabel(string userId) =>
+        db?.Users.FirstOrDefault(u => u.UserId == userId)?.Fullname ?? userId;
+
+    private static string FormatWhen(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        return DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy") : value;
+    }
+
+    private static ProgressSaveRequest NewForm() => new()
+    {
+        Area = ProgressAreas.Overall,
+        Rating = ProgressRatings.Developing,
+        Status = ProgressStatuses.Draft
+    };
+}

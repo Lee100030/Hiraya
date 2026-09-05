@@ -1,0 +1,308 @@
+@page "/schedules"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject ScheduleService ScheduleApi
+@inject NavigationManager Nav
+
+@if (AppExperience.UseMobileUserShell(Session.CurrentUser))
+{
+    <MobileScheduleView />
+}
+else
+{
+<h1>Scheduling</h1>
+
+@if (!Navigation.CanViewSchedule(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status))
+    {
+        <p class="ok">@status</p>
+    }
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="text-danger">@error</p>
+    }
+
+    <div class="toolbar">
+        <input class="form-control" placeholder="Search title, room, or teacher" @bind="query" @bind:event="oninput" />
+        <select class="form-select" @bind="kindFilter">
+            <option value="">All types</option>
+            @foreach (var kind in ScheduleKinds.All)
+            {
+                <option value="@kind">@ScheduleKinds.Label(kind)</option>
+            }
+        </select>
+        <a class="btn btn-outline-secondary" href="calendar">Open calendar</a>
+    </div>
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>When</th>
+                    <th>Title</th>
+                    <th>Type</th>
+                    <th>Class / people</th>
+                    <th>Room</th>
+                    <th>Status</th>
+                    @if (canManage)
+                    {
+                        <th></th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @if (!Filtered.Any())
+                {
+                    <tr><td colspan="@(canManage ? 7 : 6)" class="muted">No schedules match the current filters.</td></tr>
+                }
+                @foreach (var row in Filtered)
+                {
+                    <tr>
+                        <td>@row.When</td>
+                        <td>@row.Item.Title</td>
+                        <td>@ScheduleKinds.Label(row.Item.Kind)</td>
+                        <td>@row.Who</td>
+                        <td>@(string.IsNullOrWhiteSpace(row.Item.Room) ? "—" : row.Item.Room)</td>
+                        <td>@row.Item.Status</td>
+                        @if (canManage)
+                        {
+                            <td>
+                                <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Edit(row.Item)">Edit</button>
+                                @if (!string.Equals(row.Item.Status, "cancelled", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => CancelAsync(row.Item.ScheduleId)">Cancel</button>
+                                }
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (canManage)
+    {
+        <h2 class="mt-4">@(string.IsNullOrEmpty(form.ScheduleId) ? "Add schedule" : "Edit schedule")</h2>
+        <p class="muted">The system blocks overlapping teacher, room, or student assignments. Holidays and deadlines skip those checks.</p>
+        <EditForm Model="form" OnValidSubmit="SaveAsync">
+            <div class="form-grid">
+                <div>
+                    <label class="form-label">Title</label>
+                    <InputText class="form-control" @bind-Value="form.Title" />
+                </div>
+                <div>
+                    <label class="form-label">Type</label>
+                    <InputSelect class="form-select" @bind-Value="form.Kind">
+                        @foreach (var kind in ScheduleKinds.All)
+                        {
+                            <option value="@kind">@ScheduleKinds.Label(kind)</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Class</label>
+                    <InputSelect class="form-select" @bind-Value="form.ClassId" @bind-Value:after="ApplyClassDefaults">
+                        <option value="">—</option>
+                        @foreach (var item in db.Classes.OrderBy(c => c.Name))
+                        {
+                            <option value="@item.ClassId">@item.Name</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Teacher</label>
+                    <InputSelect class="form-select" @bind-Value="form.TeacherId">
+                        <option value="">—</option>
+                        @foreach (var teacher in teachers)
+                        {
+                            <option value="@teacher.UserId">@teacher.Fullname</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Student (optional 1:1)</label>
+                    <InputSelect class="form-select" @bind-Value="form.StudentId">
+                        <option value="">Whole class / none</option>
+                        @foreach (var student in db.Students.OrderBy(s => StudentNames.Display(s)))
+                        {
+                            <option value="@student.StudentId">@StudentNames.Display(student)</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Room</label>
+                    <InputText class="form-control" @bind-Value="form.Room" />
+                </div>
+                <div>
+                    <label class="form-label">Start</label>
+                    <InputDate class="form-control" Type="InputDateType.DateTimeLocal" @bind-Value="form.Start" />
+                </div>
+                <div>
+                    <label class="form-label">End</label>
+                    <InputDate class="form-control" Type="InputDateType.DateTimeLocal" @bind-Value="form.End" />
+                </div>
+                <div>
+                    <label class="form-label">Status</label>
+                    <InputSelect class="form-select" @bind-Value="form.Status">
+                        <option value="confirmed">confirmed</option>
+                        <option value="pending">pending</option>
+                        <option value="cancelled">cancelled</option>
+                    </InputSelect>
+                </div>
+                <div class="full">
+                    <label class="form-label">Notes</label>
+                    <InputTextArea class="form-control" @bind-Value="form.Notes" />
+                </div>
+            </div>
+            <button class="btn btn-primary mt-3" type="submit">Save schedule</button>
+            <button class="btn btn-link mt-3" type="button" @onclick="Clear">Clear</button>
+        </EditForm>
+    }
+}
+}
+
+@code {
+    private HirayaDatabase? db;
+    private bool canManage;
+    private string query = "";
+    private string kindFilter = "";
+    private string? status;
+    private string? error;
+    private ScheduleSaveRequest form = NewForm();
+    private List<HirayaUser> teachers = [];
+
+    private IEnumerable<ScheduleRow> Filtered
+    {
+        get
+        {
+            if (db is null || Session.CurrentUser is null) return Array.Empty<ScheduleRow>();
+            return db.Schedules
+                .Where(s => IsVisible(s))
+                .Where(s => string.IsNullOrEmpty(kindFilter) || (s.Kind == kindFilter || s.ScheduleType == kindFilter))
+                .Select(ToRow)
+                .Where(r =>
+                    string.IsNullOrWhiteSpace(query) ||
+                    r.Item.Title.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    r.Who.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    r.Item.Room.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(r => r.Item.StartAt);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        if (AppExperience.UseMobileUserShell(Session.CurrentUser))
+            return;
+
+        canManage = Navigation.CanManageSchedule(Session.CurrentUser?.Role);
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        db = await Repository.LoadAsync();
+        teachers = db.Users.Where(u => u.Role == UserRoles.Teacher).OrderBy(u => u.Fullname).ToList();
+    }
+
+    private bool IsVisible(Schedule schedule)
+    {
+        var user = Session.CurrentUser!;
+        if (user.Role is UserRoles.SuperAdmin or UserRoles.Admin or UserRoles.Staff) return true;
+        if (user.Role == UserRoles.Teacher) return schedule.TeacherId == user.UserId;
+        var kids = db!.Students.Where(s => s.ParentId == user.UserId).Select(s => s.StudentId).ToHashSet();
+        if (kids.Contains(schedule.StudentId)) return true;
+        var classIds = db.Enrollments.Where(e => kids.Contains(e.StudentId) && EnrollmentStatuses.CountsTowardCapacity(e.Status))
+            .Select(e => e.ClassId).ToHashSet();
+        return classIds.Contains(schedule.ClassId);
+    }
+
+    private ScheduleRow ToRow(Schedule item)
+    {
+        var when = ScheduleService.TryRange(item.StartAt, item.EndAt, out var start, out var end)
+            ? $"{start:ddd MMM d, h:mm tt} – {end:h:mm tt}"
+            : item.StartAt;
+        var who = !string.IsNullOrWhiteSpace(item.ClassId)
+            ? db!.Classes.FirstOrDefault(c => c.ClassId == item.ClassId)?.Name ?? item.ClassId
+            : teachers.FirstOrDefault(t => t.UserId == item.TeacherId)?.Fullname ?? "—";
+        return new ScheduleRow(item, when, who);
+    }
+
+    private void ApplyClassDefaults()
+    {
+        var item = db?.Classes.FirstOrDefault(c => c.ClassId == form.ClassId);
+        if (item == null) return;
+        if (string.IsNullOrWhiteSpace(form.TeacherId))
+            form.TeacherId = item.TeacherId;
+        if (string.IsNullOrWhiteSpace(form.Room))
+            form.Room = item.Room;
+        if (string.IsNullOrWhiteSpace(form.Title))
+            form.Title = item.Name;
+    }
+
+    private void Edit(Schedule item)
+    {
+        ScheduleService.TryRange(item.StartAt, item.EndAt, out var start, out var end);
+        form = new ScheduleSaveRequest
+        {
+            ScheduleId = item.ScheduleId,
+            Title = item.Title,
+            Kind = string.IsNullOrWhiteSpace(item.Kind) ? item.ScheduleType : item.Kind,
+            ClassId = item.ClassId,
+            StudentId = item.StudentId,
+            TeacherId = item.TeacherId,
+            Start = start == default ? DateTime.Now : start,
+            End = end == default ? DateTime.Now.AddHours(1) : end,
+            Room = item.Room,
+            Notes = item.Notes,
+            Status = item.Status
+        };
+    }
+
+    private void Clear() => form = NewForm();
+
+    private async Task SaveAsync()
+    {
+        error = null;
+        try
+        {
+            await ScheduleApi.SaveAsync(form, Session.CurrentUser);
+            status = $"Saved \"{form.Title}\".";
+            Clear();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task CancelAsync(string id)
+    {
+        await ScheduleApi.CancelAsync(id, Session.CurrentUser);
+        status = "Schedule cancelled.";
+        await ReloadAsync();
+    }
+
+    private static ScheduleSaveRequest NewForm()
+    {
+        var start = DateTime.Today.AddHours(9);
+        return new ScheduleSaveRequest { Start = start, End = start.AddHours(1), Status = "confirmed" };
+    }
+
+    private sealed record ScheduleRow(Schedule Item, string When, string Who);
+}

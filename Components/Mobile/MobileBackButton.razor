@@ -1,0 +1,32 @@
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<button type="button" class="@CssClass" @onclick="GoBackAsync" aria-label="Go back">
+    @if (string.IsNullOrWhiteSpace(Label))
+    {
+        <span aria-hidden="true">‹</span>
+        <span>Back</span>
+    }
+    else
+    {
+        @Label
+    }
+</button>
+
+@code {
+    [Parameter] public string FallbackHref { get; set; } = "/dashboard";
+    [Parameter] public string CssClass { get; set; } = "mobile-back-btn";
+    [Parameter] public string? Label { get; set; }
+
+    private async Task GoBackAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("hirayaGoBack", Nav.ToAbsoluteUri(FallbackHref).ToString());
+        }
+        catch
+        {
+            Nav.NavigateTo(FallbackHref);
+        }
+    }
+}

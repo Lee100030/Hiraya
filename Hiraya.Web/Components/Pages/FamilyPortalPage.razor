@@ -1,0 +1,127 @@
+@page "/portal/family"
+@layout PortalLayout
+@inject WebSessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+
+<PageTitle>Family · HIRAYA Learning Center</PageTitle>
+
+@if (loading)
+{
+    <p>Loading…</p>
+}
+else if (home is null)
+{
+    <p>Could not load family records. Start Hiraya.Api and try again.</p>
+}
+else
+{
+    <p class="eyebrow">Family portal</p>
+    <h1>Hello, @home.Greeting</h1>
+    <p class="lead">Monitor your child’s schedule, attendance, progress, and payments. Official records can only be changed by the learning center.</p>
+
+    <FamilyChildPicker Changed="ReloadAsync" />
+
+    @if (home.Children.Count == 0)
+    {
+        <article class="info-card">
+            <h3>No linked students</h3>
+            <p>Ask the center to connect this account to a child profile.</p>
+        </article>
+    }
+
+    <h2>Today’s schedule</h2>
+    @if (home.Today.Count == 0)
+    {
+        <p>No classes listed for today.</p>
+    }
+    else
+    {
+        <div class="card-grid">
+            @foreach (var item in home.Today)
+            {
+                <article class="info-card">
+                    <h3>@item.Title</h3>
+                    <p>@item.Start.ToString("h:mm tt")–@item.End.ToString("h:mm tt") · @(string.IsNullOrWhiteSpace(item.Room) ? "Room TBA" : item.Room)</p>
+                </article>
+            }
+        </div>
+    }
+
+    <h2>Attendance today</h2>
+    <div class="card-grid">
+        @foreach (var row in home.AttendanceToday)
+        {
+            <article class="info-card">
+                <h3>@StudentNames.Display(row.Student)</h3>
+                <p>@FamilyPortal.AttendanceLabel(row.Record?.Status)</p>
+            </article>
+        }
+    </div>
+
+    <h2>Progress</h2>
+    @if (home.RecentProgress.Count == 0)
+    {
+        <p>No published progress yet.</p>
+    }
+    else
+    {
+        @foreach (var report in home.RecentProgress)
+        {
+            <article class="info-card">
+                <h3>@ProgressAreas.Label(report.Area)</h3>
+                <p>@ProgressRatings.Label(report.Rating)</p>
+                @if (!string.IsNullOrWhiteSpace(report.Evaluation))
+                {
+                    <p>@report.Evaluation</p>
+                }
+            </article>
+        }
+    }
+
+    <h2>Payments</h2>
+    <p>@home.OpenPayments open · @home.OverduePayments overdue · ₱@home.OpenBalance.ToString("N0") remaining</p>
+
+    <h2>Announcements</h2>
+    @if (home.Announcements.Count == 0)
+    {
+        <p>No announcements.</p>
+    }
+    else
+    {
+        @foreach (var item in home.Announcements)
+        {
+            <article class="info-card">
+                <h3>@item.Title</h3>
+                <p>@item.Body</p>
+            </article>
+        }
+    }
+}
+
+@code {
+    private bool loading = true;
+    private FamilyHomeSnapshot? home;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        if (!Navigation.IsFamilyRole(Session.CurrentUser!.Role))
+        {
+            Nav.NavigateTo(WebSessionService.PortalPath(Session.CurrentUser));
+            return;
+        }
+        await ReloadAsync();
+        loading = false;
+    }
+
+    private async Task ReloadAsync()
+    {
+        var db = await Repository.LoadAsync();
+        home = FamilyPortal.BuildHome(db, Session.CurrentUser!, Session.SelectedStudentId);
+    }
+}

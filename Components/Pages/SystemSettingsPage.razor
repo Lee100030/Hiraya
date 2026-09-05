@@ -1,0 +1,117 @@
+@page "/settings/system"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject CenterSettingsService SettingsApi
+@inject NavigationManager Nav
+
+<h1>System settings</h1>
+<p class="muted">Learning-center configuration for every user. This is separate from My profile.</p>
+
+@if (!Navigation.CanManageSystemSettings(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to system settings.</p>
+}
+else if (form is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status)) { <p class="ok">@status</p> }
+    @if (!string.IsNullOrEmpty(error)) { <p class="text-danger">@error</p> }
+
+    <h2>Learning center information</h2>
+    <EditForm Model="form" OnValidSubmit="SaveAsync">
+        <div class="form-grid">
+            <div><label class="form-label">Learning center name</label><InputText class="form-control" @bind-Value="form.CenterName" /></div>
+            <div><label class="form-label">Phone</label><InputText class="form-control" @bind-Value="form.Phone" /></div>
+            <div><label class="form-label">Email</label><InputText class="form-control" @bind-Value="form.Email" /></div>
+            <div><label class="form-label">Website</label><InputText class="form-control" @bind-Value="form.Website" /></div>
+            <div class="full"><label class="form-label">Address</label><InputText class="form-control" @bind-Value="form.Address" /></div>
+            <div class="full"><label class="form-label">Description</label><InputTextArea class="form-control" @bind-Value="form.Description" /></div>
+        </div>
+
+        <h2 class="mt-4">Operational settings</h2>
+        <div class="form-grid">
+            <div><label class="form-label">Time zone</label><InputText class="form-control" @bind-Value="form.TimeZone" /></div>
+            <div><label class="form-label">Default period</label><InputText class="form-control" @bind-Value="form.DefaultPeriod" /></div>
+            <div class="full"><label class="form-label">Business hours</label><InputText class="form-control" @bind-Value="form.BusinessHours" /></div>
+            <div>
+                <label class="form-label">Default attendance status</label>
+                <InputSelect class="form-select" @bind-Value="form.DefaultAttendanceStatus">
+                    @foreach (var value in AttendanceStatuses.ForStudents)
+                    {
+                        <option value="@value">@value</option>
+                    }
+                </InputSelect>
+            </div>
+            <div>
+                <label class="form-label">Default payment method</label>
+                <InputSelect class="form-select" @bind-Value="form.DefaultPaymentMethod">
+                    @foreach (var value in PaymentMethods.All)
+                    {
+                        <option value="@value">@PaymentMethods.Label(value)</option>
+                    }
+                </InputSelect>
+            </div>
+        </div>
+
+        <h2 class="mt-4">Notification settings</h2>
+        <label class="form-check"><InputCheckbox @bind-Value="form.NotificationsEnabled" /> Enable notifications</label>
+        <label class="form-check"><InputCheckbox @bind-Value="form.NotifyAttendance" /> Attendance notifications</label>
+        <label class="form-check"><InputCheckbox @bind-Value="form.NotifyPayments" /> Payment reminders</label>
+        <label class="form-check"><InputCheckbox @bind-Value="form.NotifySchedule" /> Schedule notifications</label>
+        <label class="form-check"><InputCheckbox @bind-Value="form.NotifyProgress" /> Progress notifications</label>
+
+        <h2 class="mt-4">Learning modules</h2>
+        <div class="form-grid">
+            <div class="full">
+                <label class="form-label">Allowed extensions</label>
+                <InputText class="form-control" @bind-Value="form.ModuleAllowedExtensions" placeholder=".pdf, .docx, .pptx, .xlsx, .png, .jpg" />
+                <p class="muted">Leave blank for the default set (PDF, Office, and images). Executables are always blocked.</p>
+            </div>
+            <div>
+                <label class="form-label">Maximum file size (MB)</label>
+                <InputNumber class="form-control" @bind-Value="form.ModuleMaxFileMb" />
+                <p class="muted">Use 0 for the default 25 MB limit.</p>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <button class="btn btn-primary" type="submit">Save system settings</button>
+        </div>
+    </EditForm>
+}
+
+@code {
+    private CenterSettings? form;
+    private string? status;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        if (!Navigation.CanManageSystemSettings(Session.CurrentUser?.Role))
+            return;
+        var db = await Repository.LoadAsync();
+        form = db.Settings;
+    }
+
+    private async Task SaveAsync()
+    {
+        error = null;
+        try
+        {
+            await SettingsApi.SaveAsync(form!, Session.CurrentUser!);
+            status = "System settings saved.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+}

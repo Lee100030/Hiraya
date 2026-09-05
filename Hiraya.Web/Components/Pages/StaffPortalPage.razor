@@ -1,0 +1,58 @@
+@page "/portal/staff"
+@layout PortalLayout
+@inject WebSessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+
+<PageTitle>Staff · HIRAYA Learning Center</PageTitle>
+
+@if (loading)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <p class="eyebrow">Authorized web overview</p>
+    <h1>Administration stays on desktop</h1>
+    <p class="lead">This public website is for enrollment and login. Students, users, reports, and system settings are managed in the HIRAYA desktop application.</p>
+    @if (admin is not null)
+    {
+        <div class="card-grid">
+            <article class="info-card"><h3>@admin.ActiveStudents</h3><p>Active students</p></article>
+            <article class="info-card"><h3>@admin.PendingEnrollments</h3><p>Pending enrollments</p></article>
+            <article class="info-card"><h3>@admin.PendingPayments</h3><p>Open payments</p></article>
+        </div>
+    }
+}
+
+@code {
+    private bool loading = true;
+    private AdminDashboardSnapshot? admin;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        if (Navigation.IsFamilyRole(Session.CurrentUser!.Role) || Session.CurrentUser.Role == UserRoles.Teacher)
+        {
+            Nav.NavigateTo(WebSessionService.PortalPath(Session.CurrentUser));
+            return;
+        }
+
+        try
+        {
+            if (Navigation.CanAccessAdminPanel(Session.CurrentUser.Role) || Session.CurrentUser.Role == UserRoles.Staff)
+            {
+                var db = await Repository.LoadAsync();
+                admin = AdminDashboardService.Build(db);
+            }
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+}

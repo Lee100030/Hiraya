@@ -1,0 +1,126 @@
+@inject SessionService Session
+@inject IHirayaRepository Repository
+
+@if (home is null)
+{
+    <FamilyState Mode="loading" />
+}
+else
+{
+    <p class="eyebrow">@home.CenterName</p>
+    <SidebarUserCard CssClass="sidebar-user sidebar-user-light" />
+    <h1>Good @(GreetingWord()), @home.Greeting</h1>
+    <p class="muted">Updates for the selected child. Switch children anytime — other records stay separate.</p>
+    <FamilyChildPicker Changed="ReloadAsync" />
+
+    @if (home.Children.Count == 0)
+    {
+        <FamilyState Message="Ask the learning center to connect your account to a student profile." />
+    }
+    else
+    {
+        <div class="family-dash">
+            <section class="family-panel">
+                <p class="eyebrow">Child summary</p>
+                @if (home.FocusChild is { } child)
+                {
+                    <h2>@StudentNames.Display(child)</h2>
+                    <p class="muted mb-0">@(string.IsNullOrWhiteSpace(child.Program) ? "Program not set" : child.Program)@(string.IsNullOrWhiteSpace(child.GradeLevel) ? "" : " · " + child.GradeLevel)</p>
+                    <div class="family-kpi-row">
+                        <div>
+                            <span class="muted">Attendance</span>
+                            <strong>@(home.AttendancePercent)%</strong>
+                        </div>
+                        <div>
+                            <span class="muted">Progress</span>
+                            <strong>@home.ProgressHeadline</strong>
+                        </div>
+                        <div>
+                            <span class="muted">Payment</span>
+                            <strong>@home.PaymentHeadline</strong>
+                        </div>
+                    </div>
+                }
+            </section>
+
+            <section class="family-panel">
+                <p class="eyebrow">Upcoming schedule</p>
+                @if (home.NextClass is { } next)
+                {
+                    <h2>@next.Title</h2>
+                    <p class="muted mb-0">@next.Start.ToString("ddd d MMM, h:mm tt") · @(string.IsNullOrWhiteSpace(next.Room) ? "Room TBA" : next.Room)</p>
+                    <a class="btn btn-primary mt-3" href="schedules">View schedule</a>
+                }
+                else
+                {
+                    <p class="muted mb-0">No upcoming class on the official calendar.</p>
+                }
+            </section>
+
+            <section class="family-panel">
+                <p class="eyebrow">Today</p>
+                @if (home.Today.Count == 0)
+                {
+                    <p class="muted mb-0">No classes listed for today.</p>
+                }
+                else
+                {
+                    @foreach (var item in home.Today.Take(4))
+                    {
+                        <div class="family-inline">
+                            <strong>@item.Title</strong>
+                            <span>@item.Start.ToString("h:mm tt")</span>
+                        </div>
+                    }
+                }
+            </section>
+
+            <section class="family-panel">
+                <p class="eyebrow">Recent notification</p>
+                @if (home.Alerts.Count == 0)
+                {
+                    <p class="muted mb-0">You’re all caught up.</p>
+                }
+                else
+                {
+                    var alert = home.Alerts[0];
+                    <strong>@(string.IsNullOrWhiteSpace(alert.Title) ? NotificationKinds.Label(alert.Kind) : alert.Title)</strong>
+                    <p class="muted">@alert.Message</p>
+                    <a href="notifications">Open inbox</a>
+                }
+            </section>
+        </div>
+
+        <nav class="family-shortcuts" aria-label="More">
+            <a class="family-shortcut" href="attendance">Attendance</a>
+            <a class="family-shortcut" href="progress">Progress</a>
+            <a class="family-shortcut" href="payments">Payments</a>
+            <a class="family-shortcut" href="calendar">Calendar</a>
+            <a class="family-shortcut" href="modules">Learning modules</a>
+            <a class="family-shortcut" href="announcements">Announcements</a>
+            <a class="family-shortcut" href="more">More</a>
+        </nav>
+    }
+}
+
+@code {
+    private FamilyHomeSnapshot? home;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        if (Session.CurrentUser is null)
+            return;
+        var db = await Repository.LoadAsync();
+        home = FamilyPortal.BuildHome(db, Session.CurrentUser, Session.SelectedStudentId);
+    }
+
+    private static string GreetingWord()
+    {
+        var hour = DateTime.Now.Hour;
+        if (hour < 12) return "morning";
+        if (hour < 17) return "afternoon";
+        return "evening";
+    }
+}

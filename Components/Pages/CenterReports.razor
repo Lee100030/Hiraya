@@ -1,0 +1,143 @@
+@page "/reports"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+
+<h1>Reports</h1>
+<p class="muted">Operational snapshot for the selected date range. Figures follow your role: parents see their children, teachers see their roster.</p>
+
+@if (!Navigation.CanViewReports(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (report is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="toolbar">
+        <input class="form-control" type="date" @bind="fromValue" @bind:format="yyyy-MM-dd" />
+        <input class="form-control" type="date" @bind="toValue" @bind:format="yyyy-MM-dd" />
+        <button class="btn btn-outline-secondary" type="button" @onclick="Refresh">Apply dates</button>
+        @if (Navigation.CanViewAudit(Session.CurrentUser?.Role))
+        {
+            <a class="btn btn-outline-secondary" href="audit">Audit log</a>
+        }
+    </div>
+    <p class="muted">@report.From.ToString("MMM d, yyyy") – @report.To.ToString("MMM d, yyyy") · @(usingFirebase ? "Firebase" : "Local JSON store")</p>
+
+    <h2>Attendance</h2>
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@report.AttendanceRate.ToString("0.0")%</strong><span>Present-like rate</span></div>
+        <div class="stat-card"><strong>@report.AttendancePresent</strong><span>Present / late</span></div>
+        <div class="stat-card"><strong>@report.AttendanceAbsent</strong><span>Absent</span></div>
+        <div class="stat-card"><strong>@report.AttendanceLate</strong><span>Late</span></div>
+        <div class="stat-card"><strong>@report.AttendanceExcused</strong><span>Excused</span></div>
+    </div>
+    @if (report.AttendanceByClass.Count > 0)
+    {
+        <div class="table-wrap mt-2">
+            <table class="table">
+                <thead><tr><th>Class</th><th>Records</th></tr></thead>
+                <tbody>
+                @foreach (var row in report.AttendanceByClass)
+                {
+                    <tr><td>@row.Name</td><td>@row.Count</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <h2 class="mt-4">Enrollment</h2>
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@report.ActiveStudents</strong><span>Active students</span></div>
+        <div class="stat-card"><strong>@report.EnrollmentsActive</strong><span>Active enrollments</span></div>
+        <div class="stat-card"><strong>@report.EnrollmentsPending</strong><span>Pending enrollments</span></div>
+        <div class="stat-card"><strong>@report.ApplicationsPending</strong><span>Pending applications</span></div>
+    </div>
+    @if (report.EnrollmentByStatus.Count > 0)
+    {
+        <div class="table-wrap mt-2">
+            <table class="table">
+                <thead><tr><th>Status</th><th>Count</th></tr></thead>
+                <tbody>
+                @foreach (var row in report.EnrollmentByStatus)
+                {
+                    <tr><td>@row.Name</td><td>@row.Count</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <h2 class="mt-4">Payments</h2>
+    <div class="stat-grid">
+        <div class="stat-card"><strong>₱@report.PaymentsBilled.ToString("N0")</strong><span>Billed</span></div>
+        <div class="stat-card"><strong>₱@report.PaymentsCollected.ToString("N0")</strong><span>Collected</span></div>
+        <div class="stat-card"><strong>₱@report.PaymentsOpen.ToString("N0")</strong><span>Open</span></div>
+        <div class="stat-card"><strong>@report.PaymentsOverdue</strong><span>Overdue charges</span></div>
+    </div>
+    @if (report.PaymentsByStatus.Count > 0)
+    {
+        <div class="table-wrap mt-2">
+            <table class="table">
+                <thead><tr><th>Status</th><th>Amount</th></tr></thead>
+                <tbody>
+                @foreach (var row in report.PaymentsByStatus)
+                {
+                    <tr><td>@row.Name</td><td>₱@row.Amount.ToString("N2")</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <h2 class="mt-4">Progress</h2>
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@report.ProgressPublished</strong><span>Published</span></div>
+        <div class="stat-card"><strong>@report.ProgressDraft</strong><span>Draft</span></div>
+    </div>
+    @if (report.ProgressByArea.Count > 0)
+    {
+        <div class="table-wrap mt-2">
+            <table class="table">
+                <thead><tr><th>Area</th><th>Records</th></tr></thead>
+                <tbody>
+                @foreach (var row in report.ProgressByArea)
+                {
+                    <tr><td>@row.Name</td><td>@row.Count</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    private OperationsReport? report;
+    private bool usingFirebase;
+    private DateTime fromValue = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime toValue = DateTime.Today;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var db = await Repository.LoadAsync();
+        usingFirebase = Repository.UsingFirebase;
+        report = ReportService.Build(db, Session.CurrentUser!, fromValue, toValue);
+    }
+
+    private async Task Refresh() => await LoadAsync();
+}

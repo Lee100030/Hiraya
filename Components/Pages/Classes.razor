@@ -1,0 +1,313 @@
+@page "/classes"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject ClassService ClassesApi
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<h1>Classes</h1>
+
+@if (!Navigation.CanViewClasses(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status))
+    {
+        <p class="ok">@status</p>
+    }
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="text-danger">@error</p>
+    }
+
+    <div class="toolbar">
+        <input class="form-control" placeholder="Search class, room, or program" @bind="query" @bind:event="oninput" />
+        <select class="form-select" @bind="statusFilter">
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="archived">Archived</option>
+        </select>
+    </div>
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Class</th>
+                    <th>Program</th>
+                    <th>Teacher</th>
+                    <th>Room</th>
+                    <th>Roster</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!Filtered.Any())
+                {
+                    <tr><td colspan="7" class="muted">No classes match the current filters.</td></tr>
+                }
+                @foreach (var row in Filtered)
+                {
+                    <tr>
+                        <td>
+                            @row.Item.Name
+                            <div class="muted">@row.Item.ClassId</div>
+                        </td>
+                        <td>@row.ProgramName</td>
+                        <td>@row.TeacherName</td>
+                        <td>@row.Item.Room</td>
+                        <td>@row.Occupied / @row.Item.Capacity</td>
+                        <td>@row.Item.Status</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => selectedClassId = row.Item.ClassId">Roster</button>
+                            @if (canManage)
+                            {
+                                <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Edit(row.Item)">Edit</button>
+                                @if (string.Equals(row.Item.Status, "archived", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => RestoreAsync(row.Item.ClassId)">Restore</button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => ArchiveAsync(row.Item.ClassId)">Archive</button>
+                                }
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (selectedClassId is not null)
+    {
+        <h2 class="mt-4">Roster · @ClassName(selectedClassId)</h2>
+        <ul class="plain-list">
+            @foreach (var member in Roster(selectedClassId))
+            {
+                <li>@member</li>
+            }
+        </ul>
+    }
+
+    @if (canManage)
+    {
+        <h2 class="mt-4">@(string.IsNullOrEmpty(form.ClassId) ? "Add class" : "Edit class")</h2>
+        <EditForm Model="form" OnValidSubmit="SaveAsync">
+            <div class="form-grid">
+                <div>
+                    <label class="form-label">Class name</label>
+                    <InputText class="form-control" @bind-Value="form.Name" />
+                </div>
+                <div>
+                    <label class="form-label">Program</label>
+                    <InputSelect class="form-select" @bind-Value="form.ProgramId">
+                        <option value="">—</option>
+                        @foreach (var program in db.Programs.OrderBy(p => p.Name))
+                        {
+                            <option value="@program.ProgramId">@program.Name</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Or new program name</label>
+                    <InputText class="form-control" @bind-Value="form.NewProgramName" />
+                </div>
+                <div>
+                    <label class="form-label">Teacher</label>
+                    <InputSelect class="form-select" @bind-Value="form.TeacherId">
+                        <option value="">Unassigned</option>
+                        @foreach (var teacher in teachers)
+                        {
+                            <option value="@teacher.UserId">@teacher.Fullname</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Room</label>
+                    <InputText class="form-control" @bind-Value="form.Room" />
+                </div>
+                <div>
+                    <label class="form-label">Capacity</label>
+                    <InputNumber class="form-control" @bind-Value="form.Capacity" />
+                </div>
+                <div>
+                    <label class="form-label">Status</label>
+                    <InputSelect class="form-select" @bind-Value="form.Status">
+                        <option value="active">Active</option>
+                        <option value="archived">Archived</option>
+                    </InputSelect>
+                </div>
+                <div class="full">
+                    <label class="form-label">Schedule notes</label>
+                    <InputText class="form-control" @bind-Value="form.ScheduleNotes" />
+                </div>
+            </div>
+            <button class="btn btn-primary mt-3" type="submit">Save class</button>
+            <button class="btn btn-link mt-3" type="button" @onclick="Clear">Clear</button>
+        </EditForm>
+    }
+}
+
+@code {
+    private HirayaDatabase? db;
+    private bool canManage;
+    private string query = "";
+    private string statusFilter = "";
+    private string? status;
+    private string? error;
+    private string? selectedClassId;
+    private ClassSaveRequest form = new() { Capacity = 15, Status = "active" };
+    private List<HirayaUser> teachers = [];
+
+    private IEnumerable<ClassRow> Filtered
+    {
+        get
+        {
+            if (db is null) return Array.Empty<ClassRow>();
+            var user = Session.CurrentUser;
+            return db.Classes
+                .Where(c => user?.Role != UserRoles.Teacher || c.TeacherId == user.UserId)
+                .Where(c => string.IsNullOrEmpty(statusFilter) ||
+                            string.Equals(c.Status, statusFilter, StringComparison.OrdinalIgnoreCase))
+                .Select(ToRow)
+                .Where(r =>
+                    string.IsNullOrWhiteSpace(query) ||
+                    r.Item.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    r.Item.Room.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    r.ProgramName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    r.Item.ClassId.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(r => r.Item.Name);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        canManage = Navigation.CanManageEnrollment(Session.CurrentUser?.Role);
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        db = await Repository.LoadAsync();
+        teachers = db.Users.Where(u => u.Role == UserRoles.Teacher)
+            .OrderBy(u => u.Fullname)
+            .ToList();
+    }
+
+    private ClassRow ToRow(LearningClass item)
+    {
+        var teacher = db!.Users.FirstOrDefault(u => u.UserId == item.TeacherId)?.Fullname ?? "Unassigned";
+        return new ClassRow(
+            item,
+            ClassService.ProgramName(db, item.ProgramId),
+            teacher,
+            ClassService.OccupiedSeats(db, item.ClassId));
+    }
+
+    private void Edit(LearningClass item)
+    {
+        selectedClassId = item.ClassId;
+        form = new ClassSaveRequest
+        {
+            ClassId = item.ClassId,
+            Name = item.Name,
+            ProgramId = item.ProgramId,
+            TeacherId = item.TeacherId,
+            Room = item.Room,
+            Capacity = item.Capacity,
+            ScheduleNotes = item.ScheduleNotes,
+            Status = item.Status
+        };
+    }
+
+    private void Clear()
+    {
+        form = new ClassSaveRequest { Capacity = 15, Status = "active" };
+        selectedClassId = null;
+        error = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        error = null;
+        try
+        {
+            await ClassesApi.SaveAsync(form, Session.CurrentUser);
+            status = $"Class \"{form.Name}\" saved.";
+            var id = form.ClassId;
+            Clear();
+            await ReloadAsync();
+            selectedClassId = string.IsNullOrEmpty(id) ? db?.Classes.OrderByDescending(c => c.ClassId).FirstOrDefault()?.ClassId : id;
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task ArchiveAsync(string classId)
+    {
+        error = null;
+        if (!await JS.InvokeAsync<bool>("confirm", "Archive this class? Enrollments and attendance stay in the system."))
+            return;
+        try
+        {
+            await ClassesApi.ArchiveAsync(classId, Session.CurrentUser);
+            status = "Class archived.";
+            if (form.ClassId == classId) Clear();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task RestoreAsync(string classId)
+    {
+        error = null;
+        try
+        {
+            await ClassesApi.RestoreAsync(classId, Session.CurrentUser);
+            status = "Class restored.";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private string ClassName(string classId) =>
+        db?.Classes.FirstOrDefault(c => c.ClassId == classId)?.Name ?? classId;
+
+    private IEnumerable<string> Roster(string classId)
+    {
+        if (db is null) return Array.Empty<string>();
+        return db.Enrollments
+            .Where(e => e.ClassId == classId && EnrollmentStatuses.CountsTowardCapacity(e.Status))
+            .Select(e =>
+            {
+                var student = db.Students.FirstOrDefault(s => s.StudentId == e.StudentId);
+                var name = student == null ? e.StudentId : StudentNames.Display(student);
+                return $"{name} · {e.Status}";
+            })
+            .OrderBy(x => x);
+    }
+
+    private sealed record ClassRow(LearningClass Item, string ProgramName, string TeacherName, int Occupied);
+}

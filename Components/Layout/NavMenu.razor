@@ -1,27 +1,159 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
+﻿@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+
+<div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
-        <a class="navbar-brand" href="">Hiraya</a>
+        <a class="navbar-brand" href="dashboard">
+            <img class="nav-crest" src="images/hiraya-crest.png" alt="" />
+            <span>Hiraya Learning Center</span>
+        </a>
     </div>
 </div>
 
 <input type="checkbox" title="Navigation menu" class="navbar-toggler" />
 
 <div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <SidebarUserCard />
     <nav class="nav flex-column">
         <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
-            </NavLink>
+            <NavLink class="nav-link" href="dashboard" Match="NavLinkMatch.All">Dashboard</NavLink>
         </div>
+
+        @if (Navigation.CanManageStudents(role) || Navigation.CanViewProgress(role) || Navigation.CanViewAttendance(role))
+        {
+            <p class="nav-group">Student management</p>
+            @if (Navigation.CanManageStudents(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="students">Students</NavLink></div>
+                <div class="nav-item px-3"><NavLink class="nav-link" href="parents">Parents / guardians</NavLink></div>
+            }
+            @if (Navigation.CanViewProgress(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="progress">Student progress</NavLink></div>
+            }
+            @if (Navigation.CanViewAttendance(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="attendance">Student attendance</NavLink></div>
+            }
+        }
+
+        @if (Navigation.CanViewStaffDirectory(role))
+        {
+            <p class="nav-group">Staff management</p>
+            <div class="nav-item px-3"><NavLink class="nav-link" href="staff?role=teacher">Teachers</NavLink></div>
+            <div class="nav-item px-3"><NavLink class="nav-link" href="staff?role=staff">Staff</NavLink></div>
+            @if (Navigation.CanTakeAttendance(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="attendance?kind=employee">Staff attendance</NavLink></div>
+            }
+        }
+
+        @if (Navigation.CanViewClasses(role) || Navigation.CanViewEnrollment(role) || Navigation.CanViewSchedule(role)
+            || Navigation.CanManageLearningModules(role) || Navigation.CanViewLearningModules(role))
+        {
+        <p class="nav-group">Academic Management</p>
+            @if (Navigation.CanManageEnrollment(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="programs">Programs</NavLink></div>
+            }
+            @if (Navigation.CanViewClasses(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="classes">Classes</NavLink></div>
+            }
+            @if (Navigation.CanManageLearningModules(role) || Navigation.CanViewLearningModules(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="modules">Learning modules</NavLink></div>
+            }
+            @if (Navigation.CanViewEnrollment(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="enrollment">Enrollments</NavLink></div>
+            }
+            @if (Navigation.CanViewSchedule(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="schedules">Schedules</NavLink></div>
+                <div class="nav-item px-3"><NavLink class="nav-link" href="calendar">Calendar</NavLink></div>
+            }
+        }
+
+        @if (Navigation.CanViewPayments(role))
+        {
+            <p class="nav-group">Finance</p>
+            <div class="nav-item px-3"><NavLink class="nav-link" href="payments">Payments</NavLink></div>
+            <div class="nav-item px-3"><NavLink class="nav-link" href="payments?view=paid">Payment history</NavLink></div>
+            <div class="nav-item px-3"><NavLink class="nav-link" href="payments?view=overdue">Outstanding</NavLink></div>
+        }
+
+        @if (Navigation.CanViewReports(role))
+        {
+            <p class="nav-group">Reports</p>
+            <div class="nav-item px-3"><NavLink class="nav-link" href="reports">All reports</NavLink></div>
+        }
+
+        @if (Navigation.CanViewNotifications(role))
+        {
+            <p class="nav-group">Communication</p>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="notifications">
+                    Notifications
+                    @if (unread > 0)
+                    {
+                        <span class="nav-badge">@unread</span>
+                    }
+                </NavLink>
+            </div>
+            <div class="nav-item px-3"><NavLink class="nav-link" href="announcements">Announcements</NavLink></div>
+        }
+
+        @if (Navigation.CanManageUsers(role) || Navigation.CanViewAudit(role))
+        {
+            <p class="nav-group">Administration</p>
+            @if (Navigation.CanManageUsers(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="admin/users">Users</NavLink></div>
+            }
+            @if (Navigation.CanManageRoles(role) || Navigation.CanAccessAdminPanel(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="admin/roles">Roles &amp; permissions</NavLink></div>
+            }
+            @if (Navigation.CanViewAudit(role))
+            {
+                <div class="nav-item px-3"><NavLink class="nav-link" href="audit">Audit logs</NavLink></div>
+            }
+        }
+
+        <p class="nav-group">Settings</p>
+        <div class="nav-item px-3"><NavLink class="nav-link" href="settings/profile">My profile</NavLink></div>
+        <div class="nav-item px-3"><NavLink class="nav-link" href="settings/account">Account settings</NavLink></div>
+        @if (Navigation.CanManageSystemSettings(role))
+        {
+            <div class="nav-item px-3"><NavLink class="nav-link" href="settings/system">System settings</NavLink></div>
+        }
         <div class="nav-item px-3">
-            <NavLink class="nav-link" href="counter">
-                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="weather">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
-            </NavLink>
+            <button class="nav-link nav-logout" type="button" @onclick="SignOut">Logout</button>
         </div>
     </nav>
 </div>
+
+@code {
+    private int unread;
+    private string? role => Session.CurrentUser?.Role;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Session.CurrentUser is null)
+        {
+            unread = 0;
+            return;
+        }
+
+        var db = await Repository.LoadAsync();
+        unread = NotificationService.UnreadCount(db, Session.CurrentUser);
+    }
+
+    private void SignOut()
+    {
+        Session.SignOut();
+        Nav.NavigateTo("/");
+    }
+}

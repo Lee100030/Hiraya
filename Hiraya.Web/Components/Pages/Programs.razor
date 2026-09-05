@@ -1,0 +1,41 @@
+@page "/programs"
+@inject PublicSiteClient SiteApi
+
+<PageTitle>Programs · @Name</PageTitle>
+
+<p class="eyebrow">Learning</p>
+<h1>Programs</h1>
+<p class="lead">Choose a program that fits your child. You will pick one during enrollment.</p>
+
+@if (site is null)
+{
+    <p>Loading…</p>
+}
+else if (site.Programs.Count == 0)
+{
+    <p>Program details will appear here once the center publishes them.</p>
+}
+else
+{
+    <div class="card-grid">
+        @foreach (var program in site.Programs)
+        {
+            <article class="info-card">
+                <h3>@program.Name</h3>
+                <p>@program.Description</p>
+                <a href="@($"/enroll?program={Uri.EscapeDataString(program.Name)}")">Enroll in this program</a>
+            </article>
+        }
+    </div>
+}
+
+@code {
+    private PublicSiteDto? site;
+    private string Name => site?.CenterName ?? "HIRAYA Learning Center";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { site = await SiteApi.GetSiteAsync(); }
+        catch { site = new PublicSiteDto(); }
+    }
+}

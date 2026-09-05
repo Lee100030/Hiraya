@@ -1,0 +1,88 @@
+@page "/login"
+@layout AuthLayout
+@inject PortalAuthService Auth
+@inject SessionService Session
+@inject AuditService AuditApi
+@inject NavigationManager Nav
+
+<div class="landing landing-login">
+    <header class="landing-nav">
+        <a class="landing-brand" href="">
+            <img class="landing-nav-crest" src="images/hiraya-crest.png" alt="Hiraya Kids Learning Center" />
+            <span>Hiraya Learning Center</span>
+        </a>
+        <MobileBackButton CssClass="landing-back-btn" FallbackHref="/" />
+    </header>
+
+    <div class="landing-hero">
+        <img class="login-crest" src="images/hiraya-crest.png" alt="" />
+        <div class="login-card">
+            <p class="eyebrow">@(AppExperience.IsNativeMobile ? "Family app" : "Staff and family portal")</p>
+            <h2 class="login-heading">Sign in</h2>
+            @if (AppExperience.IsNativeMobile)
+            {
+                <p class="muted">Parents and guardians can view children, schedules, attendance, and center updates on this device.</p>
+            }
+            <EditForm Model="_login" OnValidSubmit="SignInAsync">
+                <div class="mb-3">
+                    <label class="form-label">Email</label>
+                    <InputText class="form-control" @bind-Value="_login.Email" autocomplete="username" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <input class="form-control" type="password" @bind="_login.Password" autocomplete="current-password" />
+                </div>
+                @if (!string.IsNullOrEmpty(error))
+                {
+                    <p class="text-danger">@error</p>
+                }
+                <button class="btn btn-primary w-100" type="submit" disabled="@busy">@(busy ? "Signing in…" : "Log in")</button>
+            </EditForm>
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly LoginModel _login = new();
+    private string? error;
+    private bool busy;
+
+    protected override void OnInitialized()
+    {
+        Session.SignOut();
+    }
+
+    private async Task SignInAsync()
+    {
+        busy = true;
+        error = null;
+        try
+        {
+            var user = await Auth.AuthenticateAsync(_login.Email.Trim(), _login.Password);
+            if (user == null)
+            {
+                await AuditApi.RecordFailedLoginAsync(_login.Email);
+                error = "Invalid email or password.";
+                return;
+            }
+
+            await AuditApi.RecordLoginAsync(user);
+            Session.SignIn(user);
+            Nav.NavigateTo("/dashboard");
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private sealed class LoginModel
+    {
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+    }
+}

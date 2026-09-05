@@ -1,0 +1,20 @@
+@page "/portal"
+@layout PortalLayout
+@inject WebSessionService Session
+@inject NavigationManager Nav
+
+<PageTitle>Portal · HIRAYA Learning Center</PageTitle>
+<p>Opening your dashboard…</p>
+
+@code {
+    protected override void OnInitialized()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        Nav.NavigateTo(WebSessionService.PortalPath(Session.CurrentUser!));
+    }
+}

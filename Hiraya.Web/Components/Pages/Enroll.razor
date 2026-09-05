@@ -1,0 +1,194 @@
+@page "/enroll"
+@inject PublicSiteClient SiteApi
+@inject NavigationManager Nav
+
+<PageTitle>Enrollment · HIRAYA Learning Center</PageTitle>
+
+<p class="eyebrow">Public application</p>
+<h1>Enrollment</h1>
+<p class="lead">This form is for families. It is not an internal staff record. After you submit, the center reviews the application.</p>
+
+<ol class="steps">
+    <li class="@(step == 1 ? "current" : step > 1 ? "done" : "")">Child</li>
+    <li class="@(step == 2 ? "current" : step > 2 ? "done" : "")">Guardian</li>
+    <li class="@(step == 3 ? "current" : step > 3 ? "done" : "")">Program</li>
+    <li class="@(step == 4 ? "current" : "")">Review</li>
+</ol>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="form-error">@error</p>
+}
+
+@if (step == 1)
+{
+    <div class="form-stack">
+        <label>
+            Child’s full name
+            <input @bind="form.StudentFullname" @bind:event="oninput" autocomplete="name" />
+        </label>
+        <label>
+            Date of birth
+            <input type="date" @bind="birthdate" @bind:format="yyyy-MM-dd" />
+        </label>
+        <label>
+            Gender (optional)
+            <select @bind="form.StudentGender">
+                <option value="">Prefer not to say</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+                <option value="other">Other</option>
+            </select>
+        </label>
+        <button class="btn btn-primary" type="button" @onclick="NextFromChild">Continue</button>
+    </div>
+}
+else if (step == 2)
+{
+    <div class="form-stack">
+        <label>
+            Parent or guardian name
+            <input @bind="form.ParentFullname" @bind:event="oninput" autocomplete="name" />
+        </label>
+        <label>
+            Email
+            <input type="email" @bind="form.ParentEmail" @bind:event="oninput" autocomplete="email" />
+        </label>
+        <label>
+            Phone
+            <input type="tel" @bind="form.ParentPhone" @bind:event="oninput" autocomplete="tel" />
+        </label>
+        <div class="hero-actions">
+            <button class="btn btn-ghost" type="button" @onclick="() => step = 1">Back</button>
+            <button class="btn btn-primary" type="button" @onclick="NextFromGuardian">Continue</button>
+        </div>
+    </div>
+}
+else if (step == 3)
+{
+    <div class="form-stack">
+        <p>Select the program you are applying for.</p>
+        @if (site?.Programs.Count > 0)
+        {
+            @foreach (var program in site.Programs)
+            {
+                <label class="choice">
+                    <input type="radio" name="program" value="@program.Name" checked="@(form.PreferredProgram == program.Name)"
+                           @onchange="@(() => form.PreferredProgram = program.Name)" />
+                    <span>
+                        <strong>@program.Name</strong>
+                        <small>@program.Description</small>
+                    </span>
+                </label>
+            }
+        }
+        else
+        {
+            <label>
+                Program name
+                <input @bind="form.PreferredProgram" />
+            </label>
+        }
+        <div class="hero-actions">
+            <button class="btn btn-ghost" type="button" @onclick="() => step = 2">Back</button>
+            <button class="btn btn-primary" type="button" @onclick="NextFromProgram">Continue</button>
+        </div>
+    </div>
+}
+else
+{
+    <div class="info-card">
+        <h3>Review</h3>
+        <p><strong>Child:</strong> @form.StudentFullname</p>
+        <p><strong>Born:</strong> @form.StudentBirthdate</p>
+        <p><strong>Guardian:</strong> @form.ParentFullname</p>
+        <p><strong>Email:</strong> @form.ParentEmail</p>
+        <p><strong>Phone:</strong> @form.ParentPhone</p>
+        <p><strong>Program:</strong> @form.PreferredProgram</p>
+    </div>
+    <div class="hero-actions">
+        <button class="btn btn-ghost" type="button" @onclick="() => step = 3">Back</button>
+        <button class="btn btn-primary" type="button" disabled="@busy" @onclick="SubmitAsync">
+            @(busy ? "Submitting…" : "Submit application")
+        </button>
+    </div>
+}
+
+@code {
+    private int step = 1;
+    private bool busy;
+    private string? error;
+    private DateTime birthdate = DateTime.Today.AddYears(-4);
+    private PublicSiteDto? site;
+    private readonly PublicEnrollmentRequest form = new();
+
+    [SupplyParameterFromQuery(Name = "program")]
+    public string? ProgramQuery { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { site = await SiteApi.GetSiteAsync(); }
+        catch { site = new PublicSiteDto(); }
+
+        if (!string.IsNullOrWhiteSpace(ProgramQuery))
+            form.PreferredProgram = ProgramQuery;
+    }
+
+    private void NextFromChild()
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(form.StudentFullname))
+        {
+            error = "Enter the child’s full name.";
+            return;
+        }
+        form.StudentBirthdate = birthdate.ToString("yyyy-MM-dd");
+        step = 2;
+    }
+
+    private void NextFromGuardian()
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(form.ParentFullname) || string.IsNullOrWhiteSpace(form.ParentEmail) || string.IsNullOrWhiteSpace(form.ParentPhone))
+        {
+            error = "Enter guardian name, email, and phone.";
+            return;
+        }
+        step = 3;
+    }
+
+    private void NextFromProgram()
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(form.PreferredProgram))
+        {
+            error = "Choose a program.";
+            return;
+        }
+        step = 4;
+    }
+
+    private async Task SubmitAsync()
+    {
+        busy = true;
+        error = null;
+        form.StudentBirthdate = birthdate.ToString("yyyy-MM-dd");
+        try
+        {
+            var id = await SiteApi.SubmitEnrollmentAsync(form);
+            Nav.NavigateTo($"/enroll/confirm?id={Uri.EscapeDataString(id)}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+        catch
+        {
+            error = "The website could not reach the learning center service. Confirm the API is running.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

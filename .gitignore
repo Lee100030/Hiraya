@@ -9,3 +9,7 @@ nupkg/
 *.nupkg
 project.lock.json
 artifacts/
+.data/
+**/.data/**
+firebase-service-account.json
+*.pfx

@@ -1,0 +1,154 @@
+@page "/calendar"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+
+<h1>Calendar</h1>
+
+@if (!Navigation.CanViewSchedule(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="toolbar">
+        <button class="btn btn-outline-secondary" type="button" @onclick="Previous">Previous</button>
+        <strong>@Heading</strong>
+        <button class="btn btn-outline-secondary" type="button" @onclick="Next">Next</button>
+        <button class="btn btn-outline-secondary" type="button" @onclick="GoToday">Today</button>
+        <select class="form-select" @bind="view">
+            <option value="month">Month</option>
+            <option value="week">Week</option>
+            <option value="day">Day</option>
+        </select>
+        @if (Navigation.CanManageSchedule(Session.CurrentUser?.Role))
+        {
+            <a class="btn btn-outline-secondary" href="schedules">Manage schedules</a>
+        }
+    </div>
+
+    @if (view == "month")
+    {
+        <div class="cal-weekdays">
+            @foreach (var name in new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" })
+            {
+                <div>@name</div>
+            }
+        </div>
+        <div class="cal-month">
+            @foreach (var day in MonthDays())
+            {
+                var items = ItemsOn(day);
+                <button type="button" class="cal-cell @(day.Date == DateTime.Today ? "today" : "") @(day.Month != cursor.Month ? "outside" : "")" @onclick="() => OpenDay(day)">
+                    <strong>@day.Day</strong>
+                    @foreach (var item in items.Take(3))
+                    {
+                        <div class="cal-chip">@item.Title</div>
+                    }
+                    @if (items.Count > 3)
+                    {
+                        <div class="muted">+@(items.Count - 3) more</div>
+                    }
+                </button>
+            }
+        </div>
+    }
+    else if (view == "week")
+    {
+        <div class="cal-week">
+            @foreach (var day in Enumerable.Range(0, 7).Select(i => ScheduleService.StartOfWeek(cursor).AddDays(i)))
+            {
+                <div class="cal-week-col @(day == DateTime.Today ? "today" : "")">
+                    <button type="button" class="btn btn-link" @onclick="() => OpenDay(day)">@day.ToString("ddd MMM d")</button>
+                    @foreach (var item in ItemsOn(day))
+                    {
+                        <div class="cal-chip">@item.Start.ToString("h:mm tt") · @item.Title</div>
+                    }
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <h2>@cursor.ToString("dddd, MMMM d")</h2>
+        @if (!ItemsOn(cursor).Any())
+        {
+            <p class="muted">No classes, events, or deadlines on this day.</p>
+        }
+        else
+        {
+            <ul class="plain-list">
+                @foreach (var item in ItemsOn(cursor).OrderBy(i => i.Start))
+                {
+                    <li>
+                        <strong>@item.Start.ToString("h:mm tt") – @item.End.ToString("h:mm tt")</strong>
+                        · @item.Title
+                        <div class="muted">@ScheduleKinds.Label(item.Kind) @(string.IsNullOrWhiteSpace(item.Room) ? "" : "· " + item.Room) · @item.Meta</div>
+                    </li>
+                }
+            </ul>
+        }
+    }
+}
+
+@code {
+    private HirayaDatabase? db;
+    private DateTime cursor = DateTime.Today;
+    private string view = "month";
+    private List<CalendarItem> items = [];
+
+    private string Heading => view switch
+    {
+        "week" => $"Week of {ScheduleService.StartOfWeek(cursor):MMM d, yyyy}",
+        "day" => cursor.ToString("MMMM d, yyyy"),
+        _ => cursor.ToString("MMMM yyyy")
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        db = await Repository.LoadAsync();
+        items = ScheduleService.VisibleItems(db, Session.CurrentUser!).ToList();
+    }
+
+    private List<CalendarItem> ItemsOn(DateTime day) =>
+        items.Where(i => i.Start.Date == day.Date || (i.Start.Date <= day.Date && i.End.Date >= day.Date)).ToList();
+
+    private IEnumerable<DateTime> MonthDays()
+    {
+        var first = new DateTime(cursor.Year, cursor.Month, 1);
+        var gridStart = ScheduleService.StartOfWeek(first);
+        return Enumerable.Range(0, 42).Select(i => gridStart.AddDays(i));
+    }
+
+    private void Previous() => cursor = view switch
+    {
+        "day" => cursor.AddDays(-1),
+        "week" => cursor.AddDays(-7),
+        _ => cursor.AddMonths(-1)
+    };
+
+    private void Next() => cursor = view switch
+    {
+        "day" => cursor.AddDays(1),
+        "week" => cursor.AddDays(7),
+        _ => cursor.AddMonths(1)
+    };
+
+    private void GoToday() => cursor = DateTime.Today;
+
+    private void OpenDay(DateTime day)
+    {
+        cursor = day.Date;
+        view = "day";
+    }
+}

@@ -1,0 +1,100 @@
+@page "/portal/teacher/modules/{ModuleId}"
+@layout PortalLayout
+@inject WebSessionService Session
+@inject LearningModuleClient Modules
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Module · HIRAYA</PageTitle>
+
+@if (denied)
+{
+    <h1>Not available</h1>
+    <p>That guide is not assigned to your classes, or it is not published.</p>
+    <p><a href="/portal/teacher/modules">Back to modules</a></p>
+}
+else if (module is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <p class="eyebrow">@module.ModuleType</p>
+    <h1>@module.Title</h1>
+    <p>@(string.IsNullOrWhiteSpace(module.Description) ? "No description." : module.Description)</p>
+    <p>@module.Subject · @module.Version · Updated @FormatWhen(module.UpdatedAt)</p>
+    <p>@module.FileName</p>
+    @if (!string.IsNullOrEmpty(error)) { <p class="form-error">@error</p> }
+    <p>
+        <button class="btn btn-primary" type="button" @onclick="DownloadAsync">Download</button>
+        <a class="btn btn-ghost" href="/portal/teacher/modules">Back</a>
+    </p>
+    @if (canPreview && previewUrl is not null)
+    {
+        @if (module.FileType is ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp")
+        {
+            <img class="module-preview-image" src="@previewUrl" alt="" />
+        }
+        else
+        {
+            <iframe class="module-preview" title="@module.Title" src="@previewUrl"></iframe>
+        }
+    }
+    else
+    {
+        <p>Office documents should be downloaded and opened in Word, PowerPoint, or Excel.</p>
+    }
+}
+
+@code {
+    [Parameter] public string ModuleId { get; set; } = "";
+    private LearningModule? module;
+    private bool denied;
+    private bool canPreview;
+    private string? previewUrl;
+    private string? error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Session.IsLoggedIn || Session.CurrentUser!.Role != UserRoles.Teacher)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        try
+        {
+            module = await Modules.GetAsync(ModuleId, Session.CurrentUser);
+            if (module is null)
+            {
+                denied = true;
+                return;
+            }
+            canPreview = LearningModuleRules.CanPreviewInline(module.FileType);
+            previewUrl = canPreview ? Modules.PreviewUrl(ModuleId, Session.CurrentUser) : null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            denied = true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task DownloadAsync()
+    {
+        try
+        {
+            var file = await Modules.OpenFileAsync(ModuleId, Session.CurrentUser!);
+            await JS.InvokeVoidAsync("hirayaDownload", file.FileName, Convert.ToBase64String(file.Bytes), file.ContentType);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private static string FormatWhen(string? value) =>
+        DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy") : "—";
+}

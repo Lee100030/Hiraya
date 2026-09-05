@@ -1,0 +1,54 @@
+@page "/contact"
+@inject PublicSiteClient SiteApi
+
+<PageTitle>Contact · @Name</PageTitle>
+
+<p class="eyebrow">Visit us</p>
+<h1>Contact</h1>
+<p class="lead">Questions about enrollment, schedules, or your application? Reach the learning center using the details below.</p>
+
+<div class="card-grid">
+    <article class="info-card">
+        <h3>Address</h3>
+        <p>@(string.IsNullOrWhiteSpace(site?.Address) ? "Ask the center for the campus address." : site!.Address)</p>
+    </article>
+    <article class="info-card">
+        <h3>Phone</h3>
+        @if (string.IsNullOrWhiteSpace(site?.Phone))
+        {
+            <p>Phone number will be posted by the center.</p>
+        }
+        else
+        {
+            <p><a href="tel:@site.Phone">@site.Phone</a></p>
+        }
+    </article>
+    <article class="info-card">
+        <h3>Email</h3>
+        @if (string.IsNullOrWhiteSpace(site?.Email))
+        {
+            <p>Email will be posted by the center.</p>
+        }
+        else
+        {
+            <p><a href="mailto:@site.Email">@site.Email</a></p>
+        }
+    </article>
+    <article class="info-card">
+        <h3>Hours</h3>
+        <p>@(string.IsNullOrWhiteSpace(site?.BusinessHours) ? "Monday–Friday" : site!.BusinessHours)</p>
+    </article>
+</div>
+
+<p><a class="btn btn-primary" href="/enroll">Submit an enrollment application</a></p>
+
+@code {
+    private PublicSiteDto? site;
+    private string Name => site?.CenterName ?? "HIRAYA Learning Center";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { site = await SiteApi.GetSiteAsync(); }
+        catch { site = new PublicSiteDto(); }
+    }
+}

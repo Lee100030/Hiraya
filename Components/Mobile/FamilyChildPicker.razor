@@ -1,0 +1,59 @@
+@inject SessionService Session
+@inject IHirayaRepository Repository
+
+@if (children.Count == 0)
+{
+}
+else if (children.Count == 1)
+{
+    <p class="child-single">Viewing <strong>@Display(children[0])</strong></p>
+}
+else
+{
+    <div class="child-switch" role="tablist" aria-label="Select child">
+        @foreach (var child in children)
+        {
+            var on = Session.SelectedStudentId == child.StudentId || (Session.SelectedStudentId is null && child.StudentId == children[0].StudentId);
+            <button type="button"
+                    class="child-chip @(on ? "active" : "")"
+                    @onclick="() => Choose(child.StudentId)">
+                <span>@FirstName(child)</span>
+                <small>@(string.IsNullOrWhiteSpace(child.Program) ? "Enrolled" : child.Program)</small>
+            </button>
+        }
+    </div>
+}
+
+@code {
+    private List<Student> children = [];
+
+    [Parameter] public EventCallback Changed { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.CurrentUser is null)
+            return;
+        var db = await Repository.LoadAsync();
+        children = FamilyPortal.VisibleStudents(db, Session.CurrentUser).ToList();
+        if (children.Count == 1)
+            Session.SelectStudent(children[0].StudentId);
+        else if (children.Count > 1 &&
+                 (Session.SelectedStudentId is null || children.All(c => c.StudentId != Session.SelectedStudentId)))
+            Session.SelectStudent(children[0].StudentId);
+    }
+
+    private async Task Choose(string id)
+    {
+        Session.SelectStudent(id);
+        await Changed.InvokeAsync();
+    }
+
+    private static string Display(Student student) => StudentNames.Display(student);
+
+    private static string FirstName(Student student)
+    {
+        var name = StudentNames.Display(student);
+        var space = name.IndexOf(' ');
+        return space > 0 ? name[..space] : name;
+    }
+}

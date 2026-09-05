@@ -1,0 +1,35 @@
+@page "/staff-mobile"
+@inject SessionService Session
+@inject NavigationManager Nav
+
+<div class="staff-mobile-notice">
+    <p><MobileBackButton FallbackHref="/" /></p>
+    <img src="images/hiraya-crest.png" alt="" />
+    <h1>This app is for families</h1>
+    <p>The phone and tablet app is for parents and guardians. Teachers and administrators use the desktop application or the website.</p>
+    @if (Session.CurrentUser is { } user)
+    {
+        <p class="muted">Signed in as @user.Fullname (@Navigation.RoleLabel(user.Role)).</p>
+    }
+    <button class="btn btn-primary" type="button" @onclick="SignOut">Log out</button>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        if (Session.CurrentUser is null)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        if (Navigation.IsFamilyRole(Session.CurrentUser.Role))
+            Nav.NavigateTo("/dashboard");
+    }
+
+    private void SignOut()
+    {
+        Session.SignOut();
+        Nav.NavigateTo("/");
+    }
+}

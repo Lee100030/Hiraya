@@ -1,0 +1,98 @@
+@inject SessionService Session
+@inject IHirayaRepository Repository
+
+@if (snap is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="page-hero">
+        <SidebarUserCard CssClass="sidebar-user sidebar-user-light" />
+        <img class="page-hero-crest" src="images/hiraya-crest.png" alt="" />
+        <div>
+            <p class="eyebrow">Teacher workspace</p>
+            <h1>Hello, @snap.Name</h1>
+            <p class="muted">Your classes, students, and personal weekly tasks. Official schedules are set by administration.</p>
+        </div>
+    </div>
+
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@snap.ClassCount</strong><span>Assigned classes</span></div>
+        <div class="stat-card"><strong>@snap.StudentCount</strong><span>Assigned students</span></div>
+        <div class="stat-card"><strong>@snap.TodayCount</strong><span>Sessions today</span></div>
+        <div class="stat-card"><strong>@snap.TaskCount</strong><span>Open weekly tasks</span></div>
+    </div>
+
+    <h2 class="mt-4">Today’s classes</h2>
+    @if (snap.Today.Count == 0)
+    {
+        <p class="muted">No official class sessions on your calendar today.</p>
+    }
+    else
+    {
+        <ul class="plain-list">
+            @foreach (var item in snap.Today)
+            {
+                <li><strong>@item.Start.ToString("h:mm tt")</strong> · @item.Title · @(string.IsNullOrWhiteSpace(item.Room) ? "Room TBA" : item.Room)</li>
+            }
+        </ul>
+    }
+
+    <h2 class="mt-4">Weekly tasks</h2>
+    @if (snap.Tasks.Count == 0)
+    {
+        <p class="muted">No personal tasks yet. <a href="tasks">Add a teaching task</a></p>
+    }
+    else
+    {
+        <ul class="plain-list">
+            @foreach (var task in snap.Tasks)
+            {
+                <li>@task.Title · @task.Start.ToString("ddd d MMM")</li>
+            }
+        </ul>
+        <p><a href="modules">Learning modules</a> · <a href="tasks">Manage weekly tasks</a></p>
+    }
+
+    <p class="mt-4">
+        <a class="btn btn-primary" href="attendance">Record attendance</a>
+        <a class="btn btn-outline-secondary" href="progress">Update progress</a>
+        <a class="btn btn-outline-secondary" href="roster">View roster</a>
+        <a class="btn btn-outline-secondary" href="modules">Learning modules</a>
+    </p>
+}
+
+@code {
+    private TeacherHomeSnap? snap;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.CurrentUser is null)
+            return;
+        var db = await Repository.LoadAsync();
+        var user = Session.CurrentUser;
+        var assigned = ProgressService.AssignedStudentIds(db, user.UserId);
+        var today = DateTime.Now.Date;
+        var items = ScheduleService.VisibleItems(db, user).ToList();
+        var sessions = items.Where(i => i.Kind is not ScheduleKinds.TeacherTask and not ScheduleKinds.Deadline and not "duty").ToList();
+        var tasks = items.Where(i => i.Kind == ScheduleKinds.TeacherTask && i.Start.Date >= today).OrderBy(i => i.Start).Take(8).ToList();
+        snap = new TeacherHomeSnap(
+            string.IsNullOrWhiteSpace(user.FirstName) ? user.Fullname : user.FirstName,
+            db.Classes.Count(c => c.TeacherId == user.UserId && !string.Equals(c.Status, "archived", StringComparison.OrdinalIgnoreCase)),
+            assigned.Count,
+            sessions.Count(i => i.Start.Date == today),
+            tasks.Count,
+            sessions.Where(i => i.Start.Date == today).OrderBy(i => i.Start).ToList(),
+            tasks);
+    }
+
+    private sealed record TeacherHomeSnap(
+        string Name,
+        int ClassCount,
+        int StudentCount,
+        int TodayCount,
+        int TaskCount,
+        List<CalendarItem> Today,
+        List<CalendarItem> Tasks);
+}

@@ -1,0 +1,154 @@
+@page "/settings/account"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject AccountService Accounts
+@inject NavigationManager Nav
+
+<h1>Account settings</h1>
+<p class="muted">Security and personal preferences. You cannot change your own role here.</p>
+
+@if (form is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status)) { <p class="ok">@status</p> }
+    @if (!string.IsNullOrEmpty(error)) { <p class="text-danger">@error</p> }
+
+    <h2>Preferences</h2>
+    <EditForm Model="form" OnValidSubmit="SavePrefsAsync">
+        <div class="form-grid">
+            <div>
+                <label class="form-label">Date format</label>
+                <InputSelect class="form-select" @bind-Value="form.DateFormat">
+                    <option value="MMM d, yyyy">Jan 2, 2026</option>
+                    <option value="yyyy-MM-dd">2026-01-02</option>
+                    <option value="MM/dd/yyyy">01/02/2026</option>
+                </InputSelect>
+            </div>
+            <div>
+                <label class="form-label">Time format</label>
+                <InputSelect class="form-select" @bind-Value="form.TimeFormat">
+                    <option value="HH:mm">24-hour</option>
+                    <option value="h:mm tt">12-hour</option>
+                </InputSelect>
+            </div>
+            <div>
+                <label class="form-label">Theme</label>
+                <InputSelect class="form-select" @bind-Value="form.Theme">
+                    <option value="system">System</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark (landing / chrome)</option>
+                </InputSelect>
+            </div>
+            <div class="full">
+                <label class="form-check"><InputCheckbox @bind-Value="form.NotifyAttendance" /> Attendance notifications</label>
+                <label class="form-check"><InputCheckbox @bind-Value="form.NotifyPayments" /> Payment reminders</label>
+                <label class="form-check"><InputCheckbox @bind-Value="form.NotifySchedule" /> Schedule notifications</label>
+                <label class="form-check"><InputCheckbox @bind-Value="form.NotifyProgress" /> Progress notifications</label>
+            </div>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit">Save preferences</button>
+    </EditForm>
+
+    <h2 class="mt-4">Security</h2>
+    <p class="muted">Last login: @FormatWhen(lastLogin). This device keeps a sliding 8-hour session. Sign out to end it.</p>
+    <div class="form-grid">
+        <div>
+            <label class="form-label">Current password</label>
+            <input class="form-control" type="password" @bind="currentPassword" autocomplete="current-password" />
+        </div>
+        <div>
+            <label class="form-label">New password</label>
+            <input class="form-control" type="password" @bind="newPassword" autocomplete="new-password" />
+        </div>
+        <div>
+            <label class="form-label">Confirm new password</label>
+            <input class="form-control" type="password" @bind="confirmPassword" autocomplete="new-password" />
+        </div>
+    </div>
+    <button class="btn btn-primary mt-3" type="button" @onclick="ChangePasswordAsync">Change password</button>
+}
+
+@code {
+    private ProfileSaveRequest? form;
+    private string? lastLogin;
+    private string? status;
+    private string? error;
+    private string currentPassword = "";
+    private string newPassword = "";
+    private string confirmPassword = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        var db = await Repository.LoadAsync();
+        var live = db.Users.FirstOrDefault(u => u.UserId == Session.CurrentUser!.UserId);
+        if (live is null) return;
+        lastLogin = live.LastLoginAt;
+        form = new ProfileSaveRequest
+        {
+            FirstName = live.FirstName,
+            MiddleName = live.MiddleName,
+            LastName = live.LastName,
+            Username = live.Username,
+            Email = live.Email,
+            Phone = live.Phone ?? "",
+            Address = live.Address,
+            Position = live.Position,
+            NotifyAttendance = live.NotifyAttendance,
+            NotifyPayments = live.NotifyPayments,
+            NotifySchedule = live.NotifySchedule,
+            NotifyProgress = live.NotifyProgress,
+            DateFormat = live.DateFormat,
+            TimeFormat = live.TimeFormat,
+            Theme = live.Theme
+        };
+    }
+
+    private async Task SavePrefsAsync()
+    {
+        error = null;
+        try
+        {
+            var updated = await Accounts.SaveProfileAsync(Session.CurrentUser!.UserId, form!);
+            Session.SignIn(updated);
+            status = "Preferences saved.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        error = null;
+        try
+        {
+            await Accounts.ChangePasswordAsync(Session.CurrentUser!.UserId, currentPassword, newPassword, confirmPassword);
+            currentPassword = newPassword = confirmPassword = "";
+            status = "Password changed. Use the new password the next time you sign in.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private static string FormatWhen(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        return DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy h:mm tt") : value;
+    }
+}

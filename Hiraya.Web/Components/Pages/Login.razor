@@ -1,0 +1,71 @@
+@page "/login"
+@inject PublicSiteClient SiteApi
+@inject WebSessionService Session
+@inject NavigationManager Nav
+
+<PageTitle>Log in · HIRAYA Learning Center</PageTitle>
+
+<p class="eyebrow">Family and staff</p>
+<h1>Log in</h1>
+<p class="lead">Parents open a family dashboard. Teachers and staff see a web workspace. Full administration stays in the desktop app.</p>
+
+<div class="login-panel">
+    <label>
+        Email
+        <input @bind="email" @bind:event="oninput" autocomplete="username" />
+    </label>
+    <label>
+        Password
+        <input type="password" @bind="password" @bind:event="oninput" autocomplete="current-password" />
+    </label>
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="form-error">@error</p>
+    }
+    <button class="btn btn-primary" type="button" disabled="@busy" @onclick="SignInAsync">
+        @(busy ? "Signing in…" : "Log in")
+    </button>
+</div>
+
+@code {
+    private string email = "";
+    private string password = "";
+    private string? error;
+    private bool busy;
+
+    protected override void OnInitialized()
+    {
+        if (Session.IsLoggedIn)
+            Nav.NavigateTo(WebSessionService.PortalPath(Session.CurrentUser!));
+    }
+
+    private async Task SignInAsync()
+    {
+        busy = true;
+        error = null;
+        try
+        {
+            var user = await SiteApi.LoginAsync(email.Trim(), password);
+            if (user is null)
+            {
+                error = "Invalid email or password.";
+                return;
+            }
+
+            Session.SignIn(user);
+            Nav.NavigateTo(WebSessionService.PortalPath(user));
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+        catch
+        {
+            error = "Could not reach the learning center service. Start Hiraya.Api and try again.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

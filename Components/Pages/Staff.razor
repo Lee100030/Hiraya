@@ -1,0 +1,335 @@
+@page "/staff"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject StaffService StaffSvc
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<h1>Teachers and staff</h1>
+
+@if (!Navigation.CanViewStaffDirectory(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status))
+    {
+        <p class="ok">@status</p>
+    }
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="text-danger">@error</p>
+    }
+
+    <div class="toolbar">
+        <input class="form-control" placeholder="Search name, email, or ID" @bind="query" @bind:event="oninput" />
+        <select class="form-select" @bind="roleFilter">
+            <option value="">All roles</option>
+            <option value="@UserRoles.Teacher">Teacher</option>
+            <option value="@UserRoles.Staff">Staff</option>
+        </select>
+        <select class="form-select" @bind="statusFilter">
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="archived">Archived</option>
+        </select>
+    </div>
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Employee</th>
+                    <th>Role</th>
+                    <th>Position</th>
+                    <th>Specialization</th>
+                    <th>Status</th>
+                    <th>This week</th>
+                    @if (canManage)
+                    {
+                        <th></th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @if (!Filtered.Any())
+                {
+                    <tr><td colspan="@(canManage ? 7 : 6)" class="muted">No employees match the current filters.</td></tr>
+                }
+                @foreach (var row in Filtered)
+                {
+                    <tr>
+                        <td>
+                            @row.User.Fullname
+                            <div class="muted">@(string.IsNullOrWhiteSpace(row.Profile?.EmployeeCode) ? row.User.UserId : row.Profile!.EmployeeCode)</div>
+                        </td>
+                        <td>@Navigation.RoleLabel(row.User.Role)</td>
+                        <td>@(row.Profile?.Position is { Length: > 0 } p ? p : "—")</td>
+                        <td>@(row.Profile?.Specialty is { Length: > 0 } s ? s : "—")</td>
+                        <td>@(string.IsNullOrWhiteSpace(row.User.Status) ? "active" : row.User.Status)</td>
+                        <td>@row.DutyDays duty day@(row.DutyDays == 1 ? "" : "s")</td>
+                        @if (canManage)
+                        {
+                            <td>
+                                <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Edit(row)">Edit</button>
+                                @if (string.Equals(row.User.Status, "archived", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => RestoreAsync(row.User.UserId)">Restore</button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => ArchiveAsync(row.User.UserId)">Archive</button>
+                                }
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (canManage)
+    {
+        <h2 class="mt-4">@(string.IsNullOrEmpty(form.UserId) ? "Add teacher or staff" : "Edit employee")</h2>
+        <EditForm Model="form" OnValidSubmit="SaveAsync">
+            <div class="form-grid">
+                <div>
+                    <label class="form-label">Full name</label>
+                    <InputText class="form-control" @bind-Value="form.Fullname" />
+                </div>
+                <div>
+                    <label class="form-label">Email (login)</label>
+                    <InputText class="form-control" @bind-Value="form.Email" />
+                </div>
+                <div>
+                    <label class="form-label">Password @(string.IsNullOrEmpty(form.UserId) ? "" : "(leave blank to keep)")</label>
+                    <input class="form-control" type="password" @bind="form.Password" autocomplete="new-password" />
+                </div>
+                <div>
+                    <label class="form-label">Phone</label>
+                    <InputText class="form-control" @bind-Value="form.Phone" />
+                </div>
+                <div>
+                    <label class="form-label">Role</label>
+                    <InputSelect class="form-select" @bind-Value="form.Role">
+                        <option value="@UserRoles.Teacher">Teacher</option>
+                        <option value="@UserRoles.Staff">Staff</option>
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Employee ID</label>
+                    <InputText class="form-control" @bind-Value="form.EmployeeCode" />
+                </div>
+                <div>
+                    <label class="form-label">Position</label>
+                    <InputText class="form-control" @bind-Value="form.Position" />
+                </div>
+                <div>
+                    <label class="form-label">Specialization</label>
+                    <InputSelect class="form-select" @bind-Value="form.Specialty">
+                        <option value="">—</option>
+                        @foreach (var option in specialties)
+                        {
+                            <option value="@option">@option</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Status</label>
+                    <InputSelect class="form-select" @bind-Value="form.Status">
+                        <option value="active">Active</option>
+                        <option value="archived">Archived</option>
+                    </InputSelect>
+                </div>
+                <div class="full">
+                    <label class="form-label">Notes / bio</label>
+                    <InputTextArea class="form-control" @bind-Value="form.Bio" />
+                </div>
+            </div>
+            <button class="btn btn-primary mt-3" type="submit">Save</button>
+            <button class="btn btn-link mt-3" type="button" @onclick="Clear">Clear</button>
+        </EditForm>
+
+        <h3 class="mt-4">Add specialization</h3>
+        <div class="toolbar">
+            <input class="form-control" placeholder="e.g. Mathematics" @bind="newSpecialty" />
+            <button class="btn btn-outline-secondary" type="button" @onclick="AddSpecialtyAsync">Add to list</button>
+        </div>
+    }
+}
+
+@code {
+    private HirayaDatabase? db;
+    private bool canManage;
+    private string query = "";
+    private string roleFilter = "";
+    private string statusFilter = "";
+    private string? status;
+    private string? error;
+    private string newSpecialty = "";
+    private StaffSaveRequest form = NewForm();
+    private List<string> specialties = [];
+
+    private IEnumerable<StaffRow> Filtered
+    {
+        get
+        {
+            if (db is null) return Array.Empty<StaffRow>();
+            return Rows()
+                .Where(r => string.IsNullOrEmpty(roleFilter) || r.User.Role == roleFilter)
+                .Where(r => string.IsNullOrEmpty(statusFilter) ||
+                            string.Equals(r.User.Status, statusFilter, StringComparison.OrdinalIgnoreCase) ||
+                            (statusFilter == "active" && string.IsNullOrEmpty(r.User.Status)))
+                .Where(r =>
+                    string.IsNullOrWhiteSpace(query) ||
+                    r.User.Fullname.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    r.User.Email.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    r.User.UserId.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    (r.Profile?.EmployeeCode?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (r.Profile?.Specialty?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false))
+                .OrderBy(r => r.User.Fullname);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        canManage = Navigation.CanManageStaff(Session.CurrentUser?.Role);
+        var roleQuery = RouteQuery.Get(Nav, "role");
+        if (roleQuery is UserRoles.Teacher or UserRoles.Staff)
+        {
+            roleFilter = roleQuery;
+            form.Role = roleQuery;
+        }
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        db = await Repository.LoadAsync();
+        specialties = TeacherRoleCatalog.Resolve(db);
+    }
+
+    private IEnumerable<StaffRow> Rows()
+    {
+        if (db is null) return Array.Empty<StaffRow>();
+        var weekStart = StartOfWeek(DateTime.Today);
+        var weekDates = Enumerable.Range(0, 7)
+            .Select(i => weekStart.AddDays(i).ToString("yyyy-MM-dd"))
+            .ToHashSet();
+
+        return db.Users
+            .Where(u => Navigation.IsEmployeeRole(u.Role))
+            .Select(u =>
+            {
+                var profile = db.TeacherProfiles.FirstOrDefault(p => p.UserId == u.UserId);
+                var duty = db.TeacherWorkShifts.Count(s =>
+                    s.TeacherId == u.UserId &&
+                    weekDates.Contains(s.WorkDate) &&
+                    !string.Equals(s.Status, "cancelled", StringComparison.OrdinalIgnoreCase));
+                return new StaffRow(u, profile, duty);
+            });
+    }
+
+    private void Edit(StaffRow row)
+    {
+        error = null;
+        form = new StaffSaveRequest
+        {
+            UserId = row.User.UserId,
+            ProfileId = row.Profile?.ProfileId ?? "",
+            Fullname = row.User.Fullname,
+            Email = row.User.Email,
+            Password = "",
+            Phone = row.User.Phone ?? row.Profile?.Phone ?? "",
+            Role = row.User.Role,
+            EmployeeCode = row.Profile?.EmployeeCode ?? "",
+            Position = row.Profile?.Position ?? "",
+            Specialty = row.Profile?.Specialty ?? "",
+            Bio = row.Profile?.Bio ?? "",
+            Status = string.IsNullOrWhiteSpace(row.User.Status) ? "active" : row.User.Status
+        };
+    }
+
+    private void Clear()
+    {
+        form = NewForm();
+        error = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        error = null;
+        try
+        {
+            await StaffSvc.SaveAsync(form, Session.CurrentUser);
+            status = $"{form.Fullname} saved.";
+            Clear();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task ArchiveAsync(string userId)
+    {
+        error = null;
+        if (!await JS.InvokeAsync<bool>("confirm", "Archive this employee? They will not be able to sign in. Attendance and class history stay in the system."))
+            return;
+        await StaffSvc.ArchiveAsync(userId, Session.CurrentUser);
+        status = "Employee archived. They can no longer sign in.";
+        if (form.UserId == userId)
+            Clear();
+        await ReloadAsync();
+    }
+
+    private async Task RestoreAsync(string userId)
+    {
+        error = null;
+        await StaffSvc.RestoreAsync(userId, Session.CurrentUser);
+        status = "Employee restored.";
+        await ReloadAsync();
+    }
+
+    private async Task AddSpecialtyAsync()
+    {
+        error = null;
+        try
+        {
+            await StaffSvc.AddSpecialtyAsync(newSpecialty);
+            status = $"Specialization \"{newSpecialty.Trim()}\" added.";
+            newSpecialty = "";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private static StaffSaveRequest NewForm() => new()
+    {
+        Role = UserRoles.Teacher,
+        Status = "active"
+    };
+
+    private static DateTime StartOfWeek(DateTime date)
+    {
+        var diff = (7 + (date.DayOfWeek - DayOfWeek.Monday)) % 7;
+        return date.Date.AddDays(-diff);
+    }
+
+    private sealed record StaffRow(HirayaUser User, TeacherProfile? Profile, int DutyDays);
+}

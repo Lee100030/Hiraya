@@ -1,0 +1,366 @@
+@page "/attendance"
+@inject SessionService Session
+@inject AttendanceService AttendanceApi
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+
+@if (AppExperience.UseMobileUserShell(Session.CurrentUser))
+{
+    <MobileAttendanceView />
+}
+else
+{
+<h1>Attendance</h1>
+
+@if (!Navigation.CanViewAttendance(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <p class="@(ok ? "ok" : "text-danger")">@statusMessage</p>
+    }
+
+    @if (canTake)
+    {
+        <h2>Class roster</h2>
+        <div class="toolbar">
+            <input class="form-control" type="date" @bind="rosterDateValue" @bind:format="yyyy-MM-dd" />
+            <select class="form-select" @bind="rosterClassId">
+                <option value="">Select class</option>
+                @foreach (var item in VisibleClasses())
+                {
+                    <option value="@item.ClassId">@item.Name</option>
+                }
+            </select>
+            <button class="btn btn-outline-secondary" type="button" @onclick="LoadRoster">Load roster</button>
+        </div>
+
+        @if (roster.Count > 0)
+        {
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Student</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in roster)
+                        {
+                            <tr>
+                                <td>@row.Name</td>
+                                <td>
+                                    <select class="form-select" @bind="row.Status">
+                                        @foreach (var value in AttendanceStatuses.ForStudents)
+                                        {
+                                            <option value="@value">@value</option>
+                                        }
+                                    </select>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <button class="btn btn-primary" type="button" @onclick="SaveRosterAsync">Save class attendance</button>
+        }
+
+        <h2 class="mt-4">QR check-in</h2>
+        <p class="muted">One record per student, class, and date. A second scan checks out. Changing status updates the same record.</p>
+        <div class="toolbar">
+            <input class="form-control" placeholder="QR / student code" @bind="payload" />
+            <select class="form-select" @bind="scanClassId">
+                <option value="">Class from enrollment</option>
+                @foreach (var item in VisibleClasses())
+                {
+                    <option value="@item.ClassId">@item.Name</option>
+                }
+            </select>
+            <button class="btn btn-primary" type="button" @onclick="ScanAsync">Record scan</button>
+        </div>
+    }
+
+    @if (canTake && Navigation.CanManageEnrollment(Session.CurrentUser?.Role))
+    {
+        <h2 class="mt-4">Staff attendance</h2>
+        <div class="toolbar">
+            <select class="form-select" @bind="staffUserId">
+                <option value="">Select teacher or staff</option>
+                @foreach (var employee in employees)
+                {
+                    <option value="@employee.UserId">@employee.Fullname (@Navigation.RoleLabel(employee.Role))</option>
+                }
+            </select>
+            <select class="form-select" @bind="staffStatus">
+                @foreach (var value in AttendanceStatuses.ForEmployees)
+                {
+                    <option value="@value">@value</option>
+                }
+            </select>
+            <button class="btn btn-outline-secondary" type="button" @onclick="SaveStaffAsync">Save staff record</button>
+        </div>
+    }
+
+    <h2 class="mt-4">History</h2>
+    <div class="toolbar">
+        <input class="form-control" type="date" @bind="historyDateValue" @bind:format="yyyy-MM-dd" />
+        <select class="form-select" @bind="historyStatus">
+            <option value="">All statuses</option>
+            @foreach (var value in AttendanceStatuses.ForStudents.Concat(AttendanceStatuses.ForEmployees).Distinct())
+            {
+                <option value="@value">@value</option>
+            }
+        </select>
+        <select class="form-select" @bind="historyClassId">
+            <option value="">All classes</option>
+            @foreach (var item in db.Classes.OrderBy(c => c.Name))
+            {
+                <option value="@item.ClassId">@item.Name</option>
+            }
+        </select>
+    </div>
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Class</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                    <th>In / Out</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!History.Any())
+                {
+                    <tr><td colspan="6" class="muted">No attendance records for these filters.</td></tr>
+                }
+                @foreach (var row in History)
+                {
+                    <tr>
+                        <td>@row.Name</td>
+                        <td>@row.Kind</td>
+                        <td>@row.ClassName</td>
+                        <td>@row.Date</td>
+                        <td>@row.Status</td>
+                        <td>@row.TimeIn / @row.TimeOut</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+}
+
+@code {
+    private HirayaDatabase? db;
+    private bool canTake;
+    private bool ok = true;
+    private string? statusMessage;
+    private string payload = "";
+    private string scanClassId = "";
+    private string rosterClassId = "";
+    private DateTime rosterDateValue = DateTime.Today;
+    private DateTime? historyDateValue;
+    private string historyStatus = "";
+    private string historyClassId = "";
+    private string historyKind = "";
+    private string staffUserId = "";
+    private string staffStatus = AttendanceStatuses.Present;
+    private List<HirayaUser> employees = [];
+    private List<RosterRow> roster = [];
+
+    private IEnumerable<HistoryRow> History
+    {
+        get
+        {
+            if (db is null) return Array.Empty<HistoryRow>();
+            return VisibleRecords()
+                .Where(a => historyDateValue is null || AttendanceService.DateKey(a.AttendanceDate) == historyDateValue.Value.ToString("yyyy-MM-dd"))
+                .Where(a => string.IsNullOrEmpty(historyStatus) || a.Status == historyStatus)
+                .Where(a => string.IsNullOrEmpty(historyClassId) || a.ClassId == historyClassId)
+                .Where(a => string.IsNullOrEmpty(historyKind) || a.Kind == historyKind)
+                .Select(ToHistory)
+                .OrderByDescending(r => r.Date)
+                .ThenBy(r => r.Name);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        if (AppExperience.UseMobileUserShell(Session.CurrentUser))
+            return;
+
+        canTake = Navigation.CanTakeAttendance(Session.CurrentUser?.Role);
+        var kind = RouteQuery.Get(Nav, "kind");
+        if (kind is AttendanceKinds.Employee or AttendanceKinds.Student)
+            historyKind = kind;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        db = await Repository.LoadAsync();
+        employees = db.Users.Where(u => Navigation.IsEmployeeRole(u.Role))
+            .OrderBy(u => u.Fullname)
+            .ToList();
+    }
+
+    private IEnumerable<LearningClass> VisibleClasses()
+    {
+        if (db is null) return Array.Empty<LearningClass>();
+        var user = Session.CurrentUser!;
+        var list = db.Classes.Where(c => !string.Equals(c.Status, "archived", StringComparison.OrdinalIgnoreCase));
+        if (user.Role == UserRoles.Teacher)
+            list = list.Where(c => c.TeacherId == user.UserId);
+        return list.OrderBy(c => c.Name);
+    }
+
+    private IEnumerable<AttendanceRecord> VisibleRecords()
+    {
+        if (db is null) return Array.Empty<AttendanceRecord>();
+        var user = Session.CurrentUser!;
+        IEnumerable<AttendanceRecord> records = db.Attendance;
+        if (user.Role == UserRoles.Parent)
+        {
+            var kids = db.Students.Where(s => s.ParentId == user.UserId).Select(s => s.StudentId).ToHashSet();
+            records = records.Where(a => kids.Contains(a.StudentId));
+        }
+        else if (user.Role == UserRoles.Teacher)
+        {
+            var classIds = db.Classes.Where(c => c.TeacherId == user.UserId).Select(c => c.ClassId).ToHashSet();
+            records = records.Where(a =>
+                classIds.Contains(a.ClassId) ||
+                a.EmployeeId == user.UserId);
+        }
+
+        return records;
+    }
+
+    private void LoadRoster()
+    {
+        roster.Clear();
+        if (db is null || string.IsNullOrWhiteSpace(rosterClassId))
+        {
+            statusMessage = "Select a class first.";
+            ok = false;
+            return;
+        }
+
+        var day = AttendanceService.DateKey(rosterDateValue.ToString("yyyy-MM-dd"));
+        var members = db.Enrollments
+            .Where(e => e.ClassId == rosterClassId && EnrollmentStatuses.CountsTowardCapacity(e.Status))
+            .Select(e => e.StudentId)
+            .Distinct();
+
+        foreach (var studentId in members)
+        {
+            var student = db.Students.FirstOrDefault(s => s.StudentId == studentId);
+            if (student == null) continue;
+            var existing = AttendanceService.FindStudent(db, studentId, rosterClassId, day);
+            roster.Add(new RosterRow
+            {
+                StudentId = studentId,
+                Name = StudentNames.Display(student),
+                Status = string.IsNullOrWhiteSpace(existing?.Status) ? AttendanceStatuses.Present : existing.Status
+            });
+        }
+
+        ok = true;
+        statusMessage = roster.Count == 0 ? "No enrolled students in this class." : $"Loaded {roster.Count} students.";
+    }
+
+    private async Task SaveRosterAsync()
+    {
+        try
+        {
+            await AttendanceApi.MarkClassRosterAsync(
+                rosterClassId,
+                rosterDateValue.ToString("yyyy-MM-dd"),
+                roster.Select(r => (r.StudentId, r.Status)).ToList(),
+                Session.CurrentUser!.UserId);
+            ok = true;
+            statusMessage = "Class attendance saved. Existing records for this class and date were updated, not duplicated.";
+            await ReloadAsync();
+            LoadRoster();
+        }
+        catch (InvalidOperationException ex)
+        {
+            ok = false;
+            statusMessage = ex.Message;
+        }
+    }
+
+    private async Task ScanAsync()
+    {
+        var result = await AttendanceApi.ScanStudentAsync(payload.Trim(), scanClassId);
+        ok = result.Ok;
+        statusMessage = result.Message;
+        await ReloadAsync();
+    }
+
+    private async Task SaveStaffAsync()
+    {
+        try
+        {
+            await AttendanceApi.MarkEmployeeAsync(staffUserId, rosterDateValue.ToString("yyyy-MM-dd"), staffStatus, "", Session.CurrentUser!.UserId);
+            ok = true;
+            statusMessage = "Staff attendance saved.";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            ok = false;
+            statusMessage = ex.Message;
+        }
+    }
+
+    private HistoryRow ToHistory(AttendanceRecord record)
+    {
+        var name = record.Kind == AttendanceKinds.Employee
+            ? db!.Users.FirstOrDefault(u => u.UserId == record.EmployeeId)?.Fullname ?? record.EmployeeId
+            : StudentLabel(record.StudentId);
+        var className = string.IsNullOrEmpty(record.ClassId)
+            ? "—"
+            : db!.Classes.FirstOrDefault(c => c.ClassId == record.ClassId)?.Name ?? record.ClassId;
+        return new HistoryRow(
+            name,
+            record.Kind == AttendanceKinds.Employee ? "Staff" : "Student",
+            className,
+            AttendanceService.DateKey(record.AttendanceDate),
+            string.IsNullOrWhiteSpace(record.Status) ? AttendanceStatuses.Present : record.Status,
+            string.IsNullOrEmpty(record.TimeIn) ? "—" : record.TimeIn,
+            record.TimeOut ?? "—");
+    }
+
+    private string StudentLabel(string studentId)
+    {
+        var student = db?.Students.FirstOrDefault(s => s.StudentId == studentId);
+        return student == null ? studentId : StudentNames.Display(student);
+    }
+
+    private sealed class RosterRow
+    {
+        public string StudentId { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Status { get; set; } = AttendanceStatuses.Present;
+    }
+
+    private sealed record HistoryRow(string Name, string Kind, string ClassName, string Date, string Status, string TimeIn, string TimeOut);
+}

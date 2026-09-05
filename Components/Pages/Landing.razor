@@ -1,0 +1,25 @@
+@page "/"
+@layout AuthLayout
+
+<div class="landing">
+    <header class="landing-nav">
+        <div class="landing-nav-start">
+            @if (AppExperience.IsNativeMobile)
+            {
+                <MobileBackButton CssClass="landing-back-btn" FallbackHref="/" />
+            }
+            <div class="landing-brand">
+                <img class="landing-nav-crest" src="images/hiraya-crest.png" alt="Hiraya Kids Learning Center" />
+                <span>Hiraya Learning Center</span>
+            </div>
+        </div>
+        <a class="btn btn-primary landing-login-btn" href="login">Log in</a>
+    </header>
+
+    <div class="landing-hero">
+        <img class="landing-crest" src="images/hiraya-crest.png" alt="Hiraya Kids Learning Center crest" />
+        <p class="eyebrow landing-kicker">HIRAYA LEARNING CENTER</p>
+        <h1 class="landing-title">Welcome To Hiraya Learning Center</h1>
+        <p class="landing-tag">Child care, therapy, and family connection — growing together with care.</p>
+    </div>
+</div>

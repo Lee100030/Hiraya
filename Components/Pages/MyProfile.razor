@@ -1,0 +1,242 @@
+@page "/settings/profile"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject AccountService Accounts
+@inject ProfilePhotoService Photos
+@inject NavigationManager Nav
+
+<h1>My profile</h1>
+<p class="muted">Personal information for the signed-in account. Learning-center configuration is under System settings.</p>
+
+@if (!Session.IsLoggedIn)
+{
+    <p>Sign in to view your profile.</p>
+}
+else if (form is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status)) { <p class="ok">@status</p> }
+    @if (!string.IsNullOrEmpty(error)) { <p class="text-danger">@error</p> }
+
+    <div class="profile-photo-card">
+        @if (!string.IsNullOrEmpty(preview))
+        {
+            <img src="@preview" alt="Profile" />
+        }
+        else
+        {
+            <div class="photo-placeholder">No photo</div>
+        }
+        <div>
+            <button class="btn btn-outline-secondary" type="button" @onclick="ChoosePhotoAsync">Choose photo</button>
+            <InputFile class="profile-file-input" OnChange="OnFile" accept="image/*,.jpg,.jpeg,.jfif,.png,.webp,.gif,.bmp" />
+            <div class="toolbar">
+                <button class="btn btn-primary" type="button" @onclick="SavePhotoAsync" disabled="@(pendingBytes is null)">Save picture</button>
+                <button class="btn btn-outline-danger" type="button" @onclick="RemovePhotoAsync">Remove picture</button>
+            </div>
+            <p class="muted">JPG, PNG, WEBP, GIF, or BMP. Maximum 8 MB. iPhone HEIC files must be saved as JPG first.</p>
+        </div>
+    </div>
+
+    <EditForm Model="form" OnValidSubmit="SaveAsync">
+        <div class="form-grid">
+            <div><label class="form-label">First name</label><InputText class="form-control" @bind-Value="form.FirstName" /></div>
+            <div><label class="form-label">Middle name</label><InputText class="form-control" @bind-Value="form.MiddleName" /></div>
+            <div><label class="form-label">Last name</label><InputText class="form-control" @bind-Value="form.LastName" /></div>
+            <div><label class="form-label">Username</label><InputText class="form-control" @bind-Value="form.Username" /></div>
+            <div><label class="form-label">Email</label><InputText class="form-control" @bind-Value="form.Email" /></div>
+            <div><label class="form-label">Phone</label><InputText class="form-control" @bind-Value="form.Phone" /></div>
+            <div class="full"><label class="form-label">Address</label><InputText class="form-control" @bind-Value="form.Address" /></div>
+            <div><label class="form-label">Position</label><InputText class="form-control" @bind-Value="form.Position" /></div>
+            <div>
+                <label class="form-label">Role</label>
+                <input class="form-control" value="@Navigation.RoleLabel(live!.Role)" disabled />
+            </div>
+            <div>
+                <label class="form-label">Account status</label>
+                <input class="form-control" value="@live.Status" disabled />
+            </div>
+            <div>
+                <label class="form-label">Date created</label>
+                <input class="form-control" value="@FormatWhen(live.CreatedAt)" disabled />
+            </div>
+            <div>
+                <label class="form-label">Last login</label>
+                <input class="form-control" value="@FormatWhen(live.LastLoginAt)" disabled />
+            </div>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit">Save changes</button>
+        <a class="btn btn-link mt-3" href="settings/account">Security and preferences</a>
+    </EditForm>
+}
+
+@code {
+    private HirayaUser? live;
+    private ProfileSaveRequest? form;
+    private string? status;
+    private string? error;
+    private string? preview;
+    private byte[]? pendingBytes;
+    private string pendingName = "photo.jpg";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        var db = await Repository.LoadAsync();
+        live = db.Users.FirstOrDefault(u => u.UserId == Session.CurrentUser!.UserId);
+        if (live is null)
+            return;
+        form = new ProfileSaveRequest
+        {
+            FirstName = live.FirstName,
+            MiddleName = live.MiddleName,
+            LastName = live.LastName,
+            Username = live.Username,
+            Email = live.Email,
+            Phone = live.Phone ?? "",
+            Address = live.Address,
+            Position = live.Position,
+            NotifyAttendance = live.NotifyAttendance,
+            NotifyPayments = live.NotifyPayments,
+            NotifySchedule = live.NotifySchedule,
+            NotifyProgress = live.NotifyProgress,
+            DateFormat = live.DateFormat,
+            TimeFormat = live.TimeFormat,
+            Theme = live.Theme
+        };
+        preview = Photos.ToDataUrl(live.ProfileImagePath);
+        pendingBytes = null;
+    }
+
+    private async Task ChoosePhotoAsync()
+    {
+        error = null;
+        try
+        {
+            FileResult? picked = null;
+            await MainThread.InvokeOnMainThreadAsync(async () =>
+            {
+                picked = await FilePicker.Default.PickAsync(new PickOptions
+                {
+                    PickerTitle = "Choose a profile photo",
+                    FileTypes = FilePickerFileType.Images
+                });
+            });
+            if (picked is null)
+                return;
+
+            await using var stream = await picked.OpenReadAsync();
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            SetPending(ms.ToArray(), picked.FileName);
+            status = "Photo ready. Click Save picture to apply it.";
+        }
+        catch (Exception ex)
+        {
+            error = ReadablePhotoError(ex);
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        error = null;
+        try
+        {
+            var updated = await Accounts.SaveProfileAsync(Session.CurrentUser!.UserId, form!);
+            Session.SignIn(updated);
+            status = "Profile saved.";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task OnFile(InputFileChangeEventArgs e)
+    {
+        error = null;
+        try
+        {
+            IBrowserFile file;
+            try
+            {
+                file = await e.File.RequestImageFileAsync("image/jpeg", 1280, 1280);
+            }
+            catch
+            {
+                file = e.File;
+            }
+
+            await using var stream = file.OpenReadStream(ProfilePhotoService.MaxBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            SetPending(ms.ToArray(), string.IsNullOrWhiteSpace(file.Name) ? e.File.Name : file.Name);
+            status = "Photo ready. Click Save picture to apply it.";
+        }
+        catch (Exception ex)
+        {
+            error = ReadablePhotoError(ex);
+        }
+    }
+
+    private void SetPending(byte[] bytes, string name)
+    {
+        pendingBytes = bytes;
+        pendingName = string.IsNullOrWhiteSpace(name) ? "photo.jpg" : name;
+        preview = ProfilePhotoService.ToDataUrl(bytes, pendingName);
+    }
+
+    private async Task SavePhotoAsync()
+    {
+        if (pendingBytes is null) return;
+        error = null;
+        try
+        {
+            var path = await Photos.SaveAsync(Session.CurrentUser!.UserId, pendingName, pendingBytes);
+            var db = await Repository.LoadAsync();
+            var user = db.Users.First(u => u.UserId == Session.CurrentUser.UserId);
+            Session.SignIn(AccountService.ClonePublic(user));
+            status = "Profile picture saved.";
+            pendingBytes = null;
+            preview = Photos.ToDataUrl(path);
+        }
+        catch (Exception ex)
+        {
+            error = ReadablePhotoError(ex);
+        }
+    }
+
+    private async Task RemovePhotoAsync()
+    {
+        await Photos.RemoveAsync(Session.CurrentUser!.UserId);
+        var db = await Repository.LoadAsync();
+        Session.SignIn(AccountService.ClonePublic(db.Users.First(u => u.UserId == Session.CurrentUser.UserId)));
+        preview = null;
+        pendingBytes = null;
+        status = "Profile picture removed.";
+    }
+
+    private static string ReadablePhotoError(Exception ex) =>
+        ex is InvalidOperationException or IOException
+            ? ex.Message
+            : "That photo could not be opened. Try a JPG or PNG under 8 MB.";
+
+    private static string FormatWhen(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        return DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy h:mm tt") : value;
+    }
+}

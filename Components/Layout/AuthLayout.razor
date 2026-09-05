@@ -1,0 +1,9 @@
+@inherits LayoutComponentBase
+
+<div class="auth-shell @(AppExperience.IsAndroid ? "auth-android" : "") @(AppExperience.IsNativeMobile ? "auth-native" : "")">
+    @if (AppExperience.IsAndroid)
+    {
+        <div class="android-status-spacer" aria-hidden="true"></div>
+    }
+    @Body
+</div>

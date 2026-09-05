@@ -1,0 +1,121 @@
+@page "/programs"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject ProgramService ProgramsApi
+@inject NavigationManager Nav
+
+<h1>Programs</h1>
+<p class="muted">Programs are managed here, not hard-coded in the app.</p>
+
+@if (!Navigation.CanManageEnrollment(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status)) { <p class="ok">@status</p> }
+    @if (!string.IsNullOrEmpty(error)) { <p class="text-danger">@error</p> }
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Program</th>
+                    <th>Status</th>
+                    <th>Classes</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var program in db.Programs.OrderBy(p => p.Name))
+            {
+                <tr>
+                    <td>@program.Name<div class="muted">@program.Description</div></td>
+                    <td>@program.Status</td>
+                    <td>@db.Classes.Count(c => c.ProgramId == program.ProgramId)</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Edit(program)">Edit</button>
+                        @if (!string.Equals(program.Status, "archived", StringComparison.OrdinalIgnoreCase))
+                        {
+                            <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => ArchiveAsync(program.ProgramId)">Archive</button>
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+
+    <h2 class="mt-4">@(string.IsNullOrEmpty(form.ProgramId) ? "Add program" : "Edit program")</h2>
+    <EditForm Model="form" OnValidSubmit="SaveAsync">
+        <div class="form-grid">
+            <div><label class="form-label">Name</label><InputText class="form-control" @bind-Value="form.Name" /></div>
+            <div>
+                <label class="form-label">Status</label>
+                <InputSelect class="form-select" @bind-Value="form.Status">
+                    <option value="active">active</option>
+                    <option value="archived">archived</option>
+                </InputSelect>
+            </div>
+            <div class="full"><label class="form-label">Description</label><InputTextArea class="form-control" @bind-Value="form.Description" /></div>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit">Save</button>
+        <button class="btn btn-link mt-3" type="button" @onclick="Clear">Clear</button>
+    </EditForm>
+}
+
+@code {
+    private HirayaDatabase? db;
+    private LearningProgram form = new();
+    private string? status;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        if (!Navigation.CanManageEnrollment(Session.CurrentUser?.Role))
+            return;
+        db = await Repository.LoadAsync();
+    }
+
+    private void Edit(LearningProgram program) => form = new LearningProgram
+    {
+        ProgramId = program.ProgramId,
+        Name = program.Name,
+        Description = program.Description,
+        Status = program.Status
+    };
+
+    private void Clear() => form = new LearningProgram();
+
+    private async Task SaveAsync()
+    {
+        error = null;
+        try
+        {
+            await ProgramsApi.SaveAsync(form, Session.CurrentUser!);
+            status = "Program saved.";
+            Clear();
+            db = await Repository.LoadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task ArchiveAsync(string id)
+    {
+        await ProgramsApi.ArchiveAsync(id, Session.CurrentUser!);
+        status = "Program archived.";
+        db = await Repository.LoadAsync();
+    }
+}

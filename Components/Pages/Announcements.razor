@@ -1,0 +1,180 @@
+@page "/announcements"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject NotificationService NotificationApi
+@inject NavigationManager Nav
+
+<h1>Announcements</h1>
+<p class="muted">Center news. Publishing can also drop a copy into everyone’s notification inbox.</p>
+
+@if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status))
+    {
+        <p class="ok">@status</p>
+    }
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="text-danger">@error</p>
+    }
+
+    <div class="toolbar">
+        @if (canManage)
+        {
+            <select class="form-select" @bind="statusFilter">
+                <option value="">Published and drafts</option>
+                <option value="published">Published</option>
+                <option value="draft">Drafts</option>
+                <option value="archived">Archived</option>
+            </select>
+        }
+        <a class="btn btn-outline-secondary" href="notifications">Inbox</a>
+    </div>
+
+    @foreach (var item in VisibleNews)
+    {
+        <article class="news-card">
+            <h2>@item.Title</h2>
+            <p class="muted">@FormatWhen(item.PublishedAt) · @item.Status</p>
+            <p>@item.Body</p>
+            @if (canManage && item.Status != "archived")
+            {
+                <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Edit(item)">Edit</button>
+                <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => ArchiveAsync(item.NewsId)">Archive</button>
+            }
+        </article>
+    }
+
+    @if (!VisibleNews.Any())
+    {
+        <p class="muted">No announcements in this view.</p>
+    }
+
+    @if (canManage)
+    {
+        <h2 class="mt-4">@(string.IsNullOrEmpty(form.NewsId) ? "New announcement" : "Edit announcement")</h2>
+        <EditForm Model="form" OnValidSubmit="SaveAsync">
+            <div class="form-grid">
+                <div class="full">
+                    <label class="form-label">Title</label>
+                    <InputText class="form-control" @bind-Value="form.Title" />
+                </div>
+                <div class="full">
+                    <label class="form-label">Body</label>
+                    <InputTextArea class="form-control" rows="4" @bind-Value="form.Body" />
+                </div>
+            </div>
+            <div class="toolbar">
+                <label class="form-check">
+                    <InputCheckbox class="form-check-input" @bind-Value="form.Publish" />
+                    Publish
+                </label>
+                <label class="form-check">
+                    <InputCheckbox class="form-check-input" @bind-Value="form.Notify" />
+                    Notify everyone on first publish
+                </label>
+                <button class="btn btn-primary" type="submit">Save</button>
+                @if (!string.IsNullOrEmpty(form.NewsId))
+                {
+                    <button class="btn btn-outline-secondary" type="button" @onclick="ClearForm">Cancel edit</button>
+                }
+            </div>
+        </EditForm>
+    }
+}
+
+@code {
+    private HirayaDatabase? db;
+    private bool canManage;
+    private string statusFilter = "";
+    private string status = "";
+    private string error = "";
+    private NewsSaveRequest form = new() { Publish = true, Notify = true };
+
+    private IEnumerable<NewsItem> VisibleNews
+    {
+        get
+        {
+            if (db is null) return Array.Empty<NewsItem>();
+            IEnumerable<NewsItem> news = db.News;
+            if (!canManage)
+                news = NotificationService.PublishedNews(db);
+            else if (!string.IsNullOrEmpty(statusFilter))
+                news = news.Where(n => n.Status == statusFilter || (statusFilter == "published" && n.IsPublished && n.Status != "archived"));
+            else
+                news = news.Where(n => n.Status != "archived");
+            return news.OrderByDescending(n => n.PublishedAt);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        canManage = Navigation.CanManageAnnouncements(Session.CurrentUser?.Role);
+        db = await Repository.LoadAsync();
+    }
+
+    private void Edit(NewsItem item)
+    {
+        form = new NewsSaveRequest
+        {
+            NewsId = item.NewsId,
+            Title = item.Title,
+            Body = item.Body,
+            Publish = item.IsPublished,
+            Notify = false
+        };
+    }
+
+    private void ClearForm() => form = new NewsSaveRequest { Publish = true, Notify = true };
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            await NotificationApi.SaveNewsAsync(form, Session.CurrentUser!);
+            status = form.Publish && form.Notify && string.IsNullOrEmpty(form.NewsId)
+                ? "Announcement published and sent to inboxes."
+                : "Announcement saved.";
+            error = "";
+            ClearForm();
+            db = await Repository.LoadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            status = "";
+        }
+    }
+
+    private async Task ArchiveAsync(string newsId)
+    {
+        try
+        {
+            await NotificationApi.ArchiveNewsAsync(newsId, Session.CurrentUser!);
+            status = "Announcement archived.";
+            error = "";
+            db = await Repository.LoadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            status = "";
+        }
+    }
+
+    private static string FormatWhen(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "Draft";
+        return DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy") : value;
+    }
+}

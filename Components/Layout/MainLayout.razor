@@ -1,17 +1,191 @@
 ﻿@inherits LayoutComponentBase
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+@implements IDisposable
 
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
+@if (!ready)
+{
+    @if (AppExperience.IsAndroid)
+    {
+        <div class="android-status-spacer" aria-hidden="true"></div>
+    }
+    <p class="p-4">Loading…</p>
+}
+else if (useStaffMobile)
+{
+    <div class="app-android-host">
+        @if (AppExperience.IsAndroid)
+        {
+            <div class="android-status-spacer" aria-hidden="true"></div>
+        }
+        <div class="mobile-app family-app">
+            <article class="mobile-body staff-mobile-wrap">
+                @Body
+            </article>
+        </div>
     </div>
-
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
+}
+else if (useMobile)
+{
+    <div class="app-android-host">
+        @if (AppExperience.IsAndroid)
+        {
+            <div class="android-status-spacer" aria-hidden="true"></div>
+        }
+        <MobileUserShell Unread="unread">
+            @Body
+        </MobileUserShell>
+    </div>
+}
+else
+{
+    <div class="page">
+        <div class="sidebar">
+            @if (useTeacher)
+            {
+                <TeacherNavMenu />
+            }
+            else
+            {
+                <NavMenu />
+            }
         </div>
 
-        <article class="content px-4">
-            @Body
-        </article>
-    </main>
-</div>
+        <main>
+            <div class="top-row px-4">
+                @if (Session.CurrentUser is { } user)
+                {
+                    <span class="user-chip">@user.Fullname · @Navigation.RoleLabel(user.Role)</span>
+                    <a class="btn btn-outline-secondary btn-sm" href="settings/profile">My profile</a>
+                    <button class="btn btn-primary btn-sm" type="button" @onclick="SignOut">Sign out</button>
+                }
+            </div>
+
+            <article class="content px-4">
+                @Body
+            </article>
+        </main>
+    </div>
+}
+
+@code {
+    private bool ready;
+    private bool useMobile;
+    private bool useStaffMobile;
+    private bool useTeacher;
+    private int unread;
+    private bool guarding;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnChanged;
+        Nav.LocationChanged += OnLocationChanged;
+        var ok = await Session.EnsureValidAsync(() => Repository.LoadAsync());
+        if (!ok)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        await RefreshShellAsync();
+        ready = true;
+        GuardCurrentPath();
+    }
+
+    protected override void OnParametersSet()
+    {
+        Session.Touch();
+        useMobile = AppExperience.UseMobileUserShell(Session.CurrentUser);
+        useStaffMobile = AppExperience.UseStaffOnMobileNotice(Session.CurrentUser);
+        useTeacher = AppExperience.UseTeacherWorkspace(Session.CurrentUser);
+    }
+
+    private async Task RefreshShellAsync()
+    {
+        useMobile = AppExperience.UseMobileUserShell(Session.CurrentUser);
+        useStaffMobile = AppExperience.UseStaffOnMobileNotice(Session.CurrentUser);
+        useTeacher = AppExperience.UseTeacherWorkspace(Session.CurrentUser);
+        unread = 0;
+        if (Session.CurrentUser is null)
+            return;
+        var db = await Repository.LoadAsync();
+        unread = NotificationService.UnreadCount(db, Session.CurrentUser);
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            Session.Touch();
+            await RefreshShellAsync();
+            GuardCurrentPath();
+            StateHasChanged();
+        });
+    }
+
+    private void GuardCurrentPath()
+    {
+        if ((!useMobile && !useTeacher && !useStaffMobile) || Session.CurrentUser is null || guarding)
+            return;
+
+        var path = Nav.ToBaseRelativePath(Nav.Uri);
+        if (useStaffMobile)
+        {
+            if (!AppExperience.IsStaffOnMobileAllowedPath(path))
+            {
+                guarding = true;
+                Nav.NavigateTo("/staff-mobile");
+                guarding = false;
+                return;
+            }
+
+            var clean = path.Split('?', '#')[0].Trim().Trim('/');
+            if (string.IsNullOrEmpty(clean) || clean.Equals("dashboard", StringComparison.OrdinalIgnoreCase))
+            {
+                guarding = true;
+                Nav.NavigateTo("/staff-mobile");
+                guarding = false;
+            }
+
+            return;
+        }
+
+        if (useMobile)
+        {
+            if (AppExperience.IsMobileUserAllowedPath(path))
+                return;
+        }
+        else if (useTeacher)
+        {
+            if (AppExperience.IsTeacherAllowedPath(path))
+                return;
+        }
+        else
+        {
+            return;
+        }
+
+        guarding = true;
+        Nav.NavigateTo("/denied");
+        guarding = false;
+    }
+
+    private void OnChanged() => InvokeAsync(async () =>
+    {
+        await RefreshShellAsync();
+        StateHasChanged();
+    });
+
+    private void SignOut()
+    {
+        Session.SignOut();
+        Nav.NavigateTo("/");
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnChanged;
+        Nav.LocationChanged -= OnLocationChanged;
+    }
+}

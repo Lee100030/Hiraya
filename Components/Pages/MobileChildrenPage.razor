@@ -1,0 +1,58 @@
+@page "/children"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+
+<h1>My children</h1>
+<p class="muted">Select a child to view only their schedule, attendance, progress, and payments.</p>
+
+@if (children is null)
+{
+    <FamilyState Mode="loading" />
+}
+else if (children.Count == 0)
+{
+    <FamilyState Message="No students are linked to this account yet." />
+}
+else
+{
+    <div class="child-board">
+        @foreach (var child in children)
+        {
+            var selected = Session.SelectedStudentId == child.StudentId;
+            <article class="child-board-card @(selected ? "active" : "")">
+                <h2>@StudentNames.Display(child)</h2>
+                <p class="muted">@(string.IsNullOrWhiteSpace(child.Program) ? "Program not set" : child.Program)</p>
+                <p class="muted">@(string.IsNullOrWhiteSpace(child.GradeLevel) ? "" : child.GradeLevel)</p>
+                <div class="toolbar">
+                    <button class="btn btn-primary" type="button" @onclick="() => Open(child.StudentId, schedulesHref)">Schedule</button>
+                    <button class="btn btn-outline-secondary" type="button" @onclick="() => Open(child.StudentId, attendanceHref)">Attendance</button>
+                    <button class="btn btn-outline-secondary" type="button" @onclick="() => Open(child.StudentId, progressHref)">Progress</button>
+                </div>
+            </article>
+        }
+    </div>
+}
+
+@code {
+    private const string schedulesHref = "schedules";
+    private const string attendanceHref = "attendance";
+    private const string progressHref = "progress";
+    private List<Student>? children;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.CurrentUser is null)
+            return;
+        var db = await Repository.LoadAsync();
+        children = FamilyPortal.VisibleStudents(db, Session.CurrentUser).ToList();
+        if (children.Count > 0 && Session.SelectedStudentId is null)
+            Session.SelectStudent(children[0].StudentId);
+    }
+
+    private void Open(string studentId, string href)
+    {
+        Session.SelectStudent(studentId);
+        Nav.NavigateTo("/" + href);
+    }
+}

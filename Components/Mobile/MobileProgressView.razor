@@ -1,0 +1,56 @@
+@inject SessionService Session
+@inject IHirayaRepository Repository
+
+<h1>Progress</h1>
+<p class="muted">Published learning notes for the selected child.</p>
+<FamilyChildPicker Changed="LoadAsync" />
+
+@if (rows is null)
+{
+    <FamilyState Mode="loading" />
+}
+else if (rows.Count == 0)
+{
+    <FamilyState Message="No published progress yet." />
+}
+else
+{
+    <div class="record-stack">
+        @foreach (var report in rows)
+        {
+        <div class="mobile-card">
+            <p class="eyebrow">@ProgressAreas.Label(report.Area)</p>
+            <strong>@StudentName(report.StudentId)</strong>
+            <p class="muted mb-0">@ProgressRatings.Label(report.Rating)</p>
+            @if (!string.IsNullOrWhiteSpace(report.Evaluation))
+            {
+                <p class="mt-2 mb-0">@report.Evaluation</p>
+            }
+        </div>
+    }
+    </div>
+}
+
+@code {
+    private List<ProgressReport>? rows;
+    private Dictionary<string, string> names = [];
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        if (Session.CurrentUser is null)
+            return;
+        var db = await Repository.LoadAsync();
+        names = FamilyPortal.VisibleStudents(db, Session.CurrentUser)
+            .ToDictionary(s => s.StudentId, StudentNames.Display);
+        var selected = Session.SelectedStudentId;
+        rows = ProgressService.Visible(db, Session.CurrentUser)
+            .Where(r => string.IsNullOrEmpty(selected) || r.StudentId == selected)
+            .OrderByDescending(r => r.UpdatedAt ?? r.CreatedAt)
+            .Take(40)
+            .ToList();
+    }
+
+    private string StudentName(string id) => names.GetValueOrDefault(id, "Student");
+}

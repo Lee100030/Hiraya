@@ -1,0 +1,18 @@
+@page "/denied"
+@inject SessionService Session
+@inject NavigationManager Nav
+
+<h1>Access denied</h1>
+@if (AppExperience.UseMobileUserShell(Session.CurrentUser))
+{
+    <p>Administration tools are not part of the family mobile app. Use the desktop application for staff work.</p>
+}
+else if (AppExperience.UseTeacherWorkspace(Session.CurrentUser))
+{
+    <p>That area is for administrators. Your workspace covers assigned classes, attendance, progress, and personal weekly tasks.</p>
+}
+else
+{
+    <p>Your account does not have permission to open that area of the Admin Panel.</p>
+}
+<p><a href="dashboard">Return to home</a></p>

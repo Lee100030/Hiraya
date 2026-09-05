@@ -1,0 +1,73 @@
+@page "/"
+@inject PublicSiteClient SiteApi
+
+<PageTitle>@Name</PageTitle>
+
+<section class="hero">
+    <div>
+        <p class="eyebrow">Welcome</p>
+        <h1>@Name</h1>
+        <p class="lead">@site?.Description</p>
+        <div class="hero-actions">
+            <a class="btn btn-primary" href="/enroll">Start enrollment</a>
+            <a class="btn btn-ghost" href="/programs">View programs</a>
+        </div>
+    </div>
+    <img class="hero-crest" src="images/hiraya-crest.png" alt="Hiraya Learning Center crest" />
+</section>
+
+@if (site?.Programs.Count > 0)
+{
+    <section>
+        <h2>Programs</h2>
+        <div class="card-grid">
+            @foreach (var program in site.Programs.Take(3))
+            {
+                <article class="info-card">
+                    <h3>@program.Name</h3>
+                    <p>@program.Description</p>
+                </article>
+            }
+        </div>
+        <p><a href="/programs">All programs</a></p>
+    </section>
+}
+
+<section class="cta-band">
+    <div>
+        <h2>Enroll your child</h2>
+        <p>Submit a family application online. Our staff will review it and follow up by email or phone.</p>
+    </div>
+    <a class="btn btn-primary" href="/enroll">Apply now</a>
+</section>
+
+@if (site?.Announcements.Count > 0)
+{
+    <section>
+        <h2>Announcements</h2>
+        @foreach (var item in site.Announcements)
+        {
+            <article class="info-card">
+                <h3>@item.Title</h3>
+                <p>@item.Body</p>
+            </article>
+        }
+    </section>
+}
+
+@code {
+    private PublicSiteDto? site;
+    private string Name => site?.CenterName ?? "HIRAYA Learning Center";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            site = await SiteApi.GetSiteAsync();
+        }
+        catch
+        {
+            site = new PublicSiteDto();
+        }
+    }
+}

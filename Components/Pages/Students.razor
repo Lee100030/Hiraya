@@ -1,0 +1,302 @@
+@page "/students"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<h1>Student management</h1>
+
+@if (!Navigation.CanManageStudents(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status))
+    {
+        <p class="ok">@status</p>
+    }
+
+    <div class="toolbar">
+        <input class="form-control" placeholder="Search name or ID" @bind="query" @bind:event="oninput" />
+        <select class="form-select" @bind="statusFilter">
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="pending">Pending</option>
+            <option value="archived">Archived</option>
+        </select>
+    </div>
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Student</th>
+                    <th>Program</th>
+                    <th>Status</th>
+                    <th>Parent</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var student in Filtered)
+                {
+                    <tr>
+                        <td>@StudentNames.Display(student)<div class="muted">@student.StudentId</div></td>
+                        <td>@(string.IsNullOrWhiteSpace(student.Program) ? student.GradeLevel : student.Program)</td>
+                        <td>@(string.IsNullOrWhiteSpace(student.Status) ? "active" : student.Status)</td>
+                        <td>@ParentName(student.ParentId)</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => Edit(student)">Edit</button>
+                            @if (string.Equals(student.Status, "archived", StringComparison.OrdinalIgnoreCase))
+                            {
+                                <button class="btn btn-sm btn-outline-secondary" @onclick="() => RestoreAsync(student.StudentId)">Restore</button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => ArchiveAsync(student.StudentId)">Archive</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <h2 class="mt-4">@(string.IsNullOrEmpty(form.StudentId) ? "Add student" : "Edit student")</h2>
+    <EditForm Model="form" OnValidSubmit="SaveAsync">
+        <div class="form-grid">
+            <div>
+                <label class="form-label">First name</label>
+                <InputText class="form-control" @bind-Value="form.FirstName" />
+            </div>
+            <div>
+                <label class="form-label">Middle name</label>
+                <InputText class="form-control" @bind-Value="form.MiddleName" />
+            </div>
+            <div>
+                <label class="form-label">Last name</label>
+                <InputText class="form-control" @bind-Value="form.LastName" />
+            </div>
+            <div>
+                <label class="form-label">Birthdate</label>
+                <InputText class="form-control" @bind-Value="form.Birthdate" />
+            </div>
+            <div>
+                <label class="form-label">Gender</label>
+                <InputText class="form-control" @bind-Value="form.Gender" />
+            </div>
+            <div>
+                <label class="form-label">Program / class</label>
+                <InputText class="form-control" @bind-Value="form.Program" />
+            </div>
+            <div>
+                <label class="form-label">Address</label>
+                <InputText class="form-control" @bind-Value="form.Address" />
+            </div>
+            <div>
+                <label class="form-label">Contact</label>
+                <InputText class="form-control" @bind-Value="form.ContactNumber" />
+            </div>
+            <div>
+                <label class="form-label">Guardian</label>
+                <InputSelect class="form-select" @bind-Value="form.ParentId">
+                    <option value="">—</option>
+                    @foreach (var parent in parents)
+                    {
+                        <option value="@parent.UserId">@parent.Fullname</option>
+                    }
+                </InputSelect>
+            </div>
+            <div>
+                <label class="form-label">Emergency contact</label>
+                <InputText class="form-control" @bind-Value="form.EmergencyContact" />
+            </div>
+            <div>
+                <label class="form-label">Emergency phone</label>
+                <InputText class="form-control" @bind-Value="form.EmergencyPhone" />
+            </div>
+            <div>
+                <label class="form-label">QR code</label>
+                <InputText class="form-control" @bind-Value="form.QrCode" />
+            </div>
+            <div class="full">
+                <label class="form-label">Notes</label>
+                <InputTextArea class="form-control" @bind-Value="form.Notes" />
+            </div>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit">Save</button>
+        <button class="btn btn-link mt-3" type="button" @onclick="Clear">Clear</button>
+    </EditForm>
+}
+
+@code {
+    private HirayaDatabase? db;
+    private string query = "";
+    private string statusFilter = "";
+    private string? status;
+    private Student form = new();
+    private List<HirayaUser> parents = [];
+
+    private IEnumerable<Student> Filtered
+    {
+        get
+        {
+            if (db is null) return Array.Empty<Student>();
+            return db.Students
+                .Where(s => string.IsNullOrEmpty(statusFilter) ||
+                            string.Equals(s.Status, statusFilter, StringComparison.OrdinalIgnoreCase) ||
+                            (statusFilter == "active" && string.IsNullOrEmpty(s.Status)))
+                .Where(s =>
+                    string.IsNullOrWhiteSpace(query) ||
+                    StudentNames.Display(s).Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    s.StudentId.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(s => StudentNames.Display(s));
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        db = await Repository.LoadAsync();
+        parents = db.Users.Where(u => u.Role == UserRoles.Parent).OrderBy(u => u.Fullname).ToList();
+    }
+
+    private string ParentName(string parentId) =>
+        parents.FirstOrDefault(p => p.UserId == parentId)?.Fullname ?? "—";
+
+    private void Edit(Student student)
+    {
+        form = new Student
+        {
+            StudentId = student.StudentId,
+            FirstName = student.FirstName,
+            MiddleName = student.MiddleName,
+            LastName = student.LastName,
+            Fullname = student.Fullname,
+            Birthdate = student.Birthdate.Length >= 10 ? student.Birthdate[..10] : student.Birthdate,
+            Age = student.Age,
+            Gender = student.Gender,
+            Address = student.Address,
+            ContactNumber = student.ContactNumber,
+            ParentId = student.ParentId,
+            EmergencyContact = student.EmergencyContact,
+            EmergencyPhone = student.EmergencyPhone,
+            QrCode = student.QrCode,
+            GradeLevel = student.GradeLevel,
+            Program = string.IsNullOrWhiteSpace(student.Program) ? student.GradeLevel : student.Program,
+            Status = student.Status,
+            EnrollmentDate = student.EnrollmentDate,
+            Notes = student.Notes
+        };
+    }
+
+    private void Clear() => form = new Student();
+
+    private async Task SaveAsync()
+    {
+        if (!Navigation.CanManageStudents(Session.CurrentUser?.Role))
+            return;
+        StudentNames.SyncFullName(form);
+        if (string.IsNullOrWhiteSpace(form.Fullname))
+            form.Fullname = $"{form.FirstName} {form.LastName}".Trim();
+
+        await Repository.MutateAsync(async data =>
+        {
+            var id = string.IsNullOrWhiteSpace(form.StudentId) ? IdFactory.New("stu") : form.StudentId;
+            var existing = data.Students.FirstOrDefault(s => s.StudentId == id);
+            data.Students.RemoveAll(s => s.StudentId == id);
+            data.Students.Add(new Student
+            {
+                StudentId = id,
+                FirstName = form.FirstName.Trim(),
+                MiddleName = form.MiddleName?.Trim() ?? "",
+                LastName = form.LastName.Trim(),
+                Fullname = form.Fullname.Trim(),
+                Birthdate = form.Birthdate,
+                Age = ComputeAge(form.Birthdate),
+                Gender = form.Gender,
+                Address = form.Address ?? "",
+                ContactNumber = form.ContactNumber ?? "",
+                ParentId = form.ParentId ?? "",
+                EmergencyContact = form.EmergencyContact ?? "",
+                EmergencyPhone = form.EmergencyPhone ?? "",
+                QrCode = string.IsNullOrWhiteSpace(form.QrCode) ? $"HIRAYA-{id.ToUpperInvariant()}" : form.QrCode.Trim(),
+                GradeLevel = form.Program ?? "",
+                Program = form.Program ?? "",
+                Status = string.IsNullOrWhiteSpace(form.Status) ? "active" : form.Status,
+                EnrollmentDate = string.IsNullOrWhiteSpace(existing?.EnrollmentDate)
+                    ? DateTime.UtcNow.ToString("o")
+                    : existing.EnrollmentDate,
+                Notes = form.Notes ?? ""
+            });
+            AuditService.Append(data, Session.CurrentUser, AuditModules.Students,
+                string.IsNullOrWhiteSpace(form.StudentId) ? "create" : "update",
+                "student", id, $"Saved student {form.Fullname.Trim()}.");
+            await Task.CompletedTask;
+        });
+
+        status = "Student saved.";
+        Clear();
+        await ReloadAsync();
+    }
+
+    private async Task ArchiveAsync(string id)
+    {
+        if (!Navigation.CanManageStudents(Session.CurrentUser?.Role))
+            return;
+        if (!await JS.InvokeAsync<bool>("confirm", "Archive this student? Attendance, payments, and progress stay in the system."))
+            return;
+        await Repository.MutateAsync(async data =>
+        {
+            var student = data.Students.FirstOrDefault(s => s.StudentId == id);
+            if (student != null)
+                student.Status = "archived";
+            AuditService.Append(data, Session.CurrentUser, AuditModules.Students, "archive",
+                "student", id, $"Archived student {student?.Fullname ?? id}.");
+            await Task.CompletedTask;
+        });
+        status = "Student archived.";
+        await ReloadAsync();
+    }
+
+    private async Task RestoreAsync(string id)
+    {
+        if (!Navigation.CanManageStudents(Session.CurrentUser?.Role))
+            return;
+        await Repository.MutateAsync(async data =>
+        {
+            var student = data.Students.FirstOrDefault(s => s.StudentId == id);
+            if (student != null)
+                student.Status = "active";
+            AuditService.Append(data, Session.CurrentUser, AuditModules.Students, "restore",
+                "student", id, $"Restored student {student?.Fullname ?? id}.");
+            await Task.CompletedTask;
+        });
+        status = "Student restored.";
+        await ReloadAsync();
+    }
+
+    private static int ComputeAge(string birthdate)
+    {
+        if (!DateTime.TryParse(birthdate, out var dob)) return 0;
+        var today = DateTime.UtcNow.Date;
+        var age = today.Year - dob.Year;
+        if (dob.Date > today.AddYears(-age)) age--;
+        return Math.Max(age, 0);
+    }
+}

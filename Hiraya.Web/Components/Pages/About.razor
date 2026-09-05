@@ -1,0 +1,36 @@
+@page "/about"
+@inject PublicSiteClient SiteApi
+
+<PageTitle>About · @Name</PageTitle>
+
+<p class="eyebrow">Our center</p>
+<h1>About Hiraya</h1>
+<p class="lead">@site?.Description</p>
+
+<div class="card-grid">
+    <article class="info-card">
+        <h3>Hours</h3>
+        <p>@(string.IsNullOrWhiteSpace(site?.BusinessHours) ? "Contact us for current hours." : site!.BusinessHours)</p>
+    </article>
+    <article class="info-card">
+        <h3>Families</h3>
+        <p>Parents and guardians can apply online, then use the family portal or mobile app after an account is created.</p>
+    </article>
+    <article class="info-card">
+        <h3>Staff</h3>
+        <p>Teachers and administrators work in the desktop management system. This website is for public information and enrollment.</p>
+    </article>
+</div>
+
+<p><a class="btn btn-primary" href="/enroll">Begin enrollment</a></p>
+
+@code {
+    private PublicSiteDto? site;
+    private string Name => site?.CenterName ?? "HIRAYA Learning Center";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { site = await SiteApi.GetSiteAsync(); }
+        catch { site = new PublicSiteDto(); }
+    }
+}

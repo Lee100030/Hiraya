@@ -1,0 +1,17 @@
+@if (Mode == "loading")
+{
+    <div class="family-state" role="status">Loading…</div>
+}
+else if (Mode == "error")
+{
+    <div class="family-state family-state-error" role="alert">@(string.IsNullOrWhiteSpace(Message) ? "Something went wrong. Try again." : Message)</div>
+}
+else
+{
+    <div class="family-state">@(string.IsNullOrWhiteSpace(Message) ? "Nothing to show yet." : Message)</div>
+}
+
+@code {
+    [Parameter] public string Mode { get; set; } = "empty";
+    [Parameter] public string? Message { get; set; }
+}

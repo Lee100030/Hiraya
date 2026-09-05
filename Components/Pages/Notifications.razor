@@ -1,0 +1,318 @@
+@page "/notifications"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject NotificationService NotificationApi
+@inject NavigationManager Nav
+
+<h1>Notifications</h1>
+<p class="muted">Your inbox. Module events and center messages land here. Archive instead of delete.</p>
+
+@if (!Navigation.CanViewNotifications(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status))
+    {
+        <p class="ok">@status</p>
+    }
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="text-danger">@error</p>
+    }
+
+    <div class="stat-grid">
+        <div class="stat-card">
+            <strong>@unread</strong>
+            <span>Unread</span>
+        </div>
+        <div class="stat-card">
+            <strong>@items.Count</strong>
+            <span>In inbox</span>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <select class="form-select" @bind="readFilter">
+            <option value="unread">Unread</option>
+            <option value="all">All</option>
+            <option value="archived">Archived</option>
+        </select>
+        <select class="form-select" @bind="kindFilter">
+            <option value="">All types</option>
+            @foreach (var kind in NotificationKinds.All)
+            {
+                <option value="@kind">@NotificationKinds.Label(kind)</option>
+            }
+        </select>
+        @if (unread > 0)
+        {
+            <button class="btn btn-outline-secondary" type="button" @onclick="MarkAllAsync">Mark all read</button>
+        }
+        @if (Navigation.CanManageAnnouncements(Session.CurrentUser?.Role))
+        {
+            <a class="btn btn-outline-secondary" href="announcements">Announcements</a>
+        }
+    </div>
+
+    @if (AppExperience.UseMobileUserShell(Session.CurrentUser))
+    {
+        <div class="record-stack">
+            @if (!Filtered.Any())
+            {
+                <FamilyState Message="No notifications in this view." />
+            }
+            @foreach (var alert in Filtered)
+            {
+                <article class="mobile-card @(alert.Read ? "" : "family-unread")">
+                    <p class="eyebrow">@NotificationKinds.Label(alert.Kind) · @FormatWhen(alert.CreatedAt)</p>
+                    <strong>@(string.IsNullOrWhiteSpace(alert.Title) ? NotificationKinds.Label(alert.Kind) : alert.Title)</strong>
+                    <p>@alert.Message</p>
+                    <div class="toolbar">
+                        @if (!string.IsNullOrWhiteSpace(alert.Href))
+                        {
+                            <button class="btn btn-primary" type="button" @onclick="() => Open(alert)">Open</button>
+                        }
+                        @if (!alert.Read)
+                        {
+                            <button class="btn btn-outline-secondary" type="button" @onclick="() => MarkAsync(alert.AlertId, true)">Mark read</button>
+                        }
+                        @if (!showArchived)
+                        {
+                            <button class="btn btn-outline-danger" type="button" @onclick="() => ArchiveAsync(alert.AlertId)">Archive</button>
+                        }
+                    </div>
+                </article>
+            }
+        </div>
+    }
+    else
+    {
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>When</th>
+                    <th>Type</th>
+                    <th>Message</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!Filtered.Any())
+                {
+                    <tr><td colspan="4" class="muted">No notifications in this view.</td></tr>
+                }
+                @foreach (var alert in Filtered)
+                {
+                    <tr class="@(alert.Read ? "" : "unread-row")">
+                        <td>@FormatWhen(alert.CreatedAt)</td>
+                        <td>@NotificationKinds.Label(alert.Kind)</td>
+                        <td>
+                            <strong>@(string.IsNullOrWhiteSpace(alert.Title) ? NotificationKinds.Label(alert.Kind) : alert.Title)</strong>
+                            <div>@alert.Message</div>
+                        </td>
+                        <td>
+                            @if (!string.IsNullOrWhiteSpace(alert.Href))
+                            {
+                                <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Open(alert)">Open</button>
+                            }
+                            @if (!alert.Read)
+                            {
+                                <button class="btn btn-sm btn-primary" type="button" @onclick="() => MarkAsync(alert.AlertId, true)">Mark read</button>
+                            }
+                            else if (!showArchived)
+                            {
+                                <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => MarkAsync(alert.AlertId, false)">Mark unread</button>
+                            }
+                            @if (!showArchived)
+                            {
+                                <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => ArchiveAsync(alert.AlertId)">Archive</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    }
+
+    @if (canSend)
+    {
+        <h2 class="mt-4">Send notification</h2>
+        <p class="muted">Creates one inbox item per matching account. Use announcements for center-wide news with a published page.</p>
+        <EditForm Model="form" OnValidSubmit="SendAsync">
+            <div class="form-grid">
+                <div>
+                    <label class="form-label">Audience</label>
+                    <InputSelect class="form-select" @bind-Value="form.Audience">
+                        @foreach (var audience in NotificationAudiences.All)
+                        {
+                            <option value="@audience">@NotificationAudiences.Label(audience)</option>
+                        }
+                    </InputSelect>
+                </div>
+                @if (form.Audience == NotificationAudiences.User)
+                {
+                    <div>
+                        <label class="form-label">Person</label>
+                        <InputSelect class="form-select" @bind-Value="form.UserId">
+                            <option value="">Select</option>
+                            @foreach (var user in people)
+                            {
+                                <option value="@user.UserId">@user.Fullname · @Navigation.RoleLabel(user.Role)</option>
+                            }
+                        </InputSelect>
+                    </div>
+                }
+                <div>
+                    <label class="form-label">Type</label>
+                    <InputSelect class="form-select" @bind-Value="form.Kind">
+                        @foreach (var kind in NotificationKinds.All)
+                        {
+                            <option value="@kind">@NotificationKinds.Label(kind)</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Link (optional)</label>
+                    <InputSelect class="form-select" @bind-Value="form.Href">
+                        <option value="">None</option>
+                        <option value="enrollment">Enrollment</option>
+                        <option value="attendance">Attendance</option>
+                        <option value="progress">Progress</option>
+                        <option value="payments">Payments</option>
+                        <option value="calendar">Calendar</option>
+                        <option value="announcements">Announcements</option>
+                    </InputSelect>
+                </div>
+                <div class="full">
+                    <label class="form-label">Title</label>
+                    <InputText class="form-control" @bind-Value="form.Title" />
+                </div>
+                <div class="full">
+                    <label class="form-label">Message</label>
+                    <InputTextArea class="form-control" rows="3" @bind-Value="form.Message" />
+                </div>
+            </div>
+            <div class="toolbar">
+                <button class="btn btn-primary" type="submit">Send</button>
+            </div>
+        </EditForm>
+    }
+}
+
+@code {
+    private HirayaDatabase? db;
+    private bool canSend;
+    private string readFilter = "unread";
+    private string kindFilter = "";
+    private string status = "";
+    private string error = "";
+    private int unread;
+    private List<SystemAlert> items = [];
+    private List<HirayaUser> people = [];
+    private NotificationSendRequest form = new()
+    {
+        Audience = NotificationAudiences.Parents,
+        Kind = NotificationKinds.System
+    };
+
+    private bool showArchived => readFilter == "archived";
+
+    private IEnumerable<SystemAlert> Filtered =>
+        items
+            .Where(a => readFilter != "archived" || NotificationService.IsArchived(a))
+            .Where(a => readFilter == "archived" || !NotificationService.IsArchived(a))
+            .Where(a => readFilter != "unread" || !a.Read)
+            .Where(a => string.IsNullOrEmpty(kindFilter) || a.Kind == kindFilter || (string.IsNullOrWhiteSpace(a.Kind) && kindFilter == NotificationKinds.System))
+            .OrderByDescending(a => a.CreatedAt);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        canSend = Navigation.CanSendNotifications(Session.CurrentUser?.Role);
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        db = await Repository.LoadAsync();
+        var user = Session.CurrentUser!;
+        unread = NotificationService.UnreadCount(db, user);
+        items = NotificationService.Inbox(db, user, includeArchived: true).ToList();
+        people = db.Users
+            .Where(u => !string.Equals(u.Status, "archived", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(u => u.Fullname)
+            .ToList();
+    }
+
+    private async Task MarkAsync(string alertId, bool read)
+    {
+        await NotificationApi.MarkReadAsync(alertId, Session.CurrentUser!, read);
+        status = read ? "Marked read." : "Marked unread.";
+        error = "";
+        await ReloadAsync();
+    }
+
+    private async Task MarkAllAsync()
+    {
+        await NotificationApi.MarkAllReadAsync(Session.CurrentUser!);
+        status = "All notifications marked read.";
+        error = "";
+        await ReloadAsync();
+    }
+
+    private async Task ArchiveAsync(string alertId)
+    {
+        await NotificationApi.ArchiveAsync(alertId, Session.CurrentUser!);
+        status = "Notification archived.";
+        error = "";
+        await ReloadAsync();
+    }
+
+    private async Task SendAsync()
+    {
+        try
+        {
+            await NotificationApi.SendAsync(form, Session.CurrentUser!);
+            status = "Notification sent.";
+            error = "";
+            form = new NotificationSendRequest
+            {
+                Audience = NotificationAudiences.Parents,
+                Kind = NotificationKinds.System
+            };
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            status = "";
+        }
+    }
+
+    private async Task Open(SystemAlert alert)
+    {
+        if (!alert.Read)
+            await NotificationApi.MarkReadAsync(alert.AlertId, Session.CurrentUser!, true);
+        var href = alert.Href.StartsWith('/') ? alert.Href : "/" + alert.Href.TrimStart('/');
+        Nav.NavigateTo(href);
+    }
+
+    private static string FormatWhen(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        return DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy h:mm tt") : value;
+    }
+}

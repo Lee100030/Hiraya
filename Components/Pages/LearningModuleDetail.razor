@@ -1,0 +1,226 @@
+@page "/modules/{ModuleId}"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject LearningModuleClient Modules
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+@if (denied)
+{
+    <h1>Access denied</h1>
+    <p>You are not allowed to open that learning module.</p>
+    <p><a href="modules">Back to modules</a></p>
+}
+else if (module is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <p class="eyebrow">Learning module</p>
+    <h1>@module.Title</h1>
+    <p class="muted">@LearningModuleStatuses.Label(module.Status) · @module.Version · @module.ModuleType</p>
+    @if (!string.IsNullOrEmpty(status)) { <p class="ok">@status</p> }
+    @if (!string.IsNullOrEmpty(error)) { <p class="text-danger">@error</p> }
+
+    <p>@(string.IsNullOrWhiteSpace(module.Description) ? "No description." : module.Description)</p>
+    <ul class="plain-list">
+        <li>Program: @programName</li>
+        <li>Classes: @classNames</li>
+        <li>Subject: @(string.IsNullOrWhiteSpace(module.Subject) ? "—" : module.Subject)</li>
+        <li>Grade / age: @(string.IsNullOrWhiteSpace(module.GradeLevel) ? "—" : module.GradeLevel)</li>
+        <li>File: @module.FileName (@FormatSize(module.FileSize) · @module.FileType)</li>
+        <li>Uploaded by: @uploader</li>
+        <li>Created: @FormatWhen(module.CreatedAt)</li>
+        <li>Updated: @FormatWhen(module.UpdatedAt)</li>
+        @if (!string.IsNullOrWhiteSpace(module.PublishedAt))
+        {
+            <li>Published: @FormatWhen(module.PublishedAt)</li>
+        }
+    </ul>
+
+    <div class="toolbar">
+        <button class="btn btn-primary" type="button" @onclick="() => DownloadAsync()">Download</button>
+        @if (isAdmin)
+        {
+            <a class="btn btn-outline-secondary" href="modules">Edit from list</a>
+            @if (module.Status != LearningModuleStatuses.Published)
+            {
+                <button class="btn btn-outline-secondary" type="button" @onclick="() => StatusAsync(LearningModuleStatuses.Published)">Publish</button>
+            }
+            else
+            {
+                <button class="btn btn-outline-secondary" type="button" @onclick="() => StatusAsync(LearningModuleStatuses.Draft)">Unpublish</button>
+            }
+            @if (module.Status != LearningModuleStatuses.Archived)
+            {
+                <button class="btn btn-outline-danger" type="button" @onclick="() => StatusAsync(LearningModuleStatuses.Archived)">Archive</button>
+            }
+            else
+            {
+                <button class="btn btn-outline-secondary" type="button" @onclick="() => StatusAsync(LearningModuleStatuses.Draft)">Restore</button>
+            }
+            @if (module.Status == LearningModuleStatuses.Draft && string.IsNullOrWhiteSpace(module.PublishedAt))
+            {
+                <button class="btn btn-outline-danger" type="button" @onclick="DeleteAsync">Delete draft</button>
+            }
+        }
+        <a class="btn btn-link" href="modules">Back</a>
+    </div>
+
+    @if (canPreview)
+    {
+        <h2 class="mt-4">Preview</h2>
+        @if (previewUrl is not null && module.FileType is ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp")
+        {
+            <img class="module-preview-image" src="@previewUrl" alt="@module.Title" />
+        }
+        else if (previewUrl is not null)
+        {
+            <iframe class="module-preview" title="@module.Title" src="@previewUrl"></iframe>
+        }
+        else
+        {
+            <p class="muted">Preview is loading…</p>
+        }
+    }
+    else
+    {
+        <p class="muted mt-3">This file type opens best after download (Word, PowerPoint, or Excel).</p>
+    }
+
+    @if (isAdmin && versions.Count > 0)
+    {
+        <h2 class="mt-4">Version history</h2>
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Version</th>
+                        <th>Notes</th>
+                        <th>File</th>
+                        <th>When</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var version in versions)
+                {
+                    <tr>
+                        <td>@version.Version @(version.IsCurrent ? "(current)" : "")</td>
+                        <td>@(string.IsNullOrWhiteSpace(version.ChangeDescription) ? "—" : version.ChangeDescription)</td>
+                        <td>@version.FileName</td>
+                        <td>@FormatWhen(version.CreatedAt)</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => DownloadAsync(version.VersionId)">Download</button>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public string ModuleId { get; set; } = "";
+
+    private LearningModule? module;
+    private List<LearningModuleVersion> versions = [];
+    private bool isAdmin;
+    private bool denied;
+    private string? status;
+    private string? error;
+    private string programName = "—";
+    private string classNames = "—";
+    private string uploader = "—";
+    private string? previewUrl;
+    private bool canPreview;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        isAdmin = Navigation.CanManageLearningModules(Session.CurrentUser?.Role);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        denied = false;
+        try
+        {
+            module = await Modules.GetAsync(ModuleId, Session.CurrentUser!);
+            if (module is null)
+            {
+                denied = true;
+                return;
+            }
+            versions = await Modules.VersionsAsync(ModuleId, Session.CurrentUser!);
+            var db = await Repository.LoadAsync();
+            programName = db.Programs.FirstOrDefault(p => p.ProgramId == module.ProgramId)?.Name
+                          ?? (string.IsNullOrWhiteSpace(module.ProgramId) ? "All programs" : module.ProgramId);
+            classNames = module.ClassIds.Count == 0
+                ? "Program-wide"
+                : string.Join(", ", db.Classes.Where(c => module.ClassIds.Contains(c.ClassId)).Select(c => c.Name));
+            uploader = db.Users.FirstOrDefault(u => u.UserId == module.UploadedByUserId)?.Fullname ?? module.UploadedByUserId;
+            canPreview = LearningModuleRules.CanPreviewInline(module.FileType);
+            previewUrl = canPreview ? Modules.PreviewUrl(ModuleId, Session.CurrentUser!) : null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            denied = true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task StatusAsync(string value)
+    {
+        error = null;
+        try
+        {
+            await Modules.SetStatusAsync(ModuleId, value, Session.CurrentUser!);
+            status = "Module status updated.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Delete this draft module and its files?"))
+            return;
+        await Modules.DeleteAsync(ModuleId, Session.CurrentUser!);
+        Nav.NavigateTo("/modules");
+    }
+
+    private async Task DownloadAsync(string? versionId = null)
+    {
+        error = null;
+        try
+        {
+            var file = await Modules.OpenFileAsync(ModuleId, Session.CurrentUser!, versionId);
+            await JS.InvokeVoidAsync("hirayaDownload", file.FileName, Convert.ToBase64String(file.Bytes), file.ContentType);
+            status = "Download started.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private static string FormatWhen(string? value) =>
+        DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy h:mm tt") : "—";
+
+    private static string FormatSize(long bytes) =>
+        bytes < 1024 ? $"{bytes} B" : bytes < 1024 * 1024 ? $"{bytes / 1024.0:0} KB" : $"{bytes / (1024.0 * 1024):0.0} MB";
+}

@@ -1,0 +1,48 @@
+@inherits LayoutComponentBase
+@inject WebSessionService Session
+@implements IDisposable
+
+<header class="site-header">
+    <a class="site-brand" href="/">
+        <img src="images/hiraya-crest.png" alt="" />
+        <span>Hiraya Learning Center</span>
+    </a>
+    <nav class="site-nav">
+        <NavLink href="/" Match="NavLinkMatch.All">Home</NavLink>
+        <NavLink href="/about">About</NavLink>
+        <NavLink href="/programs">Programs</NavLink>
+        <NavLink href="/enroll">Enroll</NavLink>
+        <NavLink href="/contact">Contact</NavLink>
+        @if (Session.IsLoggedIn)
+        {
+            <NavLink href="/portal">Portal</NavLink>
+            <button class="nav-text" type="button" @onclick="SignOut">Sign out</button>
+        }
+        else
+        {
+            <NavLink href="/login">Log in</NavLink>
+        }
+    </nav>
+</header>
+
+<main class="site-main">
+    @Body
+</main>
+
+<footer class="site-footer">
+    <p>HIRAYA Learning Center · Family enrollment and web access</p>
+    <p class="muted">Administration is handled in the desktop application.</p>
+</footer>
+
+@code {
+    protected override void OnInitialized() => Session.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private void SignOut()
+    {
+        Session.SignOut();
+    }
+
+    public void Dispose() => Session.Changed -= OnChanged;
+}

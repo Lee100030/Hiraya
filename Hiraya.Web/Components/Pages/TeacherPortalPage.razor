@@ -1,0 +1,88 @@
+@page "/portal/teacher"
+@layout PortalLayout
+@inject WebSessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+
+<PageTitle>Teacher · HIRAYA Learning Center</PageTitle>
+
+@if (loading)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <p class="eyebrow">Teacher portal</p>
+    <h1>Hello, @name</h1>
+    <p class="lead">This website is a quick check-in. Record attendance, progress, and weekly tasks in the desktop teacher workspace.</p>
+
+    <div class="card-grid">
+        <article class="info-card"><h3>@classCount</h3><p>Assigned classes</p></article>
+        <article class="info-card"><h3>@studentCount</h3><p>Assigned students</p></article>
+        <article class="info-card"><h3>@today.Count</h3><p>Sessions today</p></article>
+        <article class="info-card"><h3>@taskCount</h3><p>Open weekly tasks</p></article>
+    </div>
+
+    <h2>Today’s official classes</h2>
+    @if (today.Count == 0)
+    {
+        <p>No official class sessions on your calendar today.</p>
+    }
+    else
+    {
+        @foreach (var item in today)
+        {
+            <article class="info-card">
+                <h3>@item.Title</h3>
+                <p>@item.Start.ToString("h:mm tt")–@item.End.ToString("h:mm tt") · @(string.IsNullOrWhiteSpace(item.Room) ? "Room TBA" : item.Room)</p>
+            </article>
+        }
+    }
+
+    <p class="muted">Weekly teaching tasks are private to you. Official schedules are controlled by administration.</p>
+    <p><a class="btn btn-primary" href="/portal/teacher/modules">Open learning modules</a></p>
+}
+
+@code {
+    private bool loading = true;
+    private string name = "";
+    private int classCount;
+    private int studentCount;
+    private int taskCount;
+    private List<CalendarItem> today = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        if (Session.CurrentUser!.Role != UserRoles.Teacher)
+        {
+            Nav.NavigateTo(WebSessionService.PortalPath(Session.CurrentUser));
+            return;
+        }
+
+        try
+        {
+            var db = await Repository.LoadAsync();
+            var user = Session.CurrentUser;
+            name = string.IsNullOrWhiteSpace(user.FirstName) ? user.Fullname : user.FirstName;
+            classCount = db.Classes.Count(c => c.TeacherId == user.UserId && !string.Equals(c.Status, "archived", StringComparison.OrdinalIgnoreCase));
+            studentCount = ProgressService.AssignedStudentIds(db, user.UserId).Count;
+            var items = ScheduleService.VisibleItems(db, user).ToList();
+            var day = DateTime.Now.Date;
+            today = items
+                .Where(i => i.Kind is not ScheduleKinds.TeacherTask and not ScheduleKinds.Deadline and not "duty")
+                .Where(i => i.Start.Date == day)
+                .OrderBy(i => i.Start)
+                .ToList();
+            taskCount = items.Count(i => i.Kind == ScheduleKinds.TeacherTask && i.Start.Date >= day);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+}

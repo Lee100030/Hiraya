@@ -1,0 +1,77 @@
+@inject SessionService Session
+@inject NavigationManager Nav
+
+<div class="mobile-app family-app">
+    <header class="mobile-top">
+        <div class="mobile-top-start">
+            <MobileBackButton FallbackHref="/dashboard" />
+            <a class="mobile-brand" href="dashboard">
+                <img src="images/hiraya-crest.png" alt="" />
+                <span>Hiraya</span>
+            </a>
+        </div>
+        <div class="mobile-top-actions">
+            <SidebarUserCard Compact="true" CssClass="sidebar-user sidebar-user-compact" />
+            <a class="mobile-icon-link" href="notifications">
+                Alerts
+                @if (Unread > 0)
+                {
+                    <span class="mobile-badge">@Unread</span>
+                }
+            </a>
+        </div>
+    </header>
+
+    <nav class="mobile-side" aria-label="Family">
+        <SidebarUserCard />
+        <MobileBackButton CssClass="mobile-side-link mobile-side-button" FallbackHref="/dashboard" />
+        <NavLink class="mobile-side-link" href="dashboard" Match="NavLinkMatch.All">Home</NavLink>
+        <NavLink class="mobile-side-link" href="children">Children</NavLink>
+        <NavLink class="mobile-side-link" href="schedules">Schedule</NavLink>
+        <NavLink class="mobile-side-link" href="attendance">Attendance</NavLink>
+        <NavLink class="mobile-side-link" href="progress">Progress</NavLink>
+        <NavLink class="mobile-side-link" href="payments">Payments</NavLink>
+        <NavLink class="mobile-side-link" href="calendar">Calendar</NavLink>
+        <NavLink class="mobile-side-link" href="modules">Learning modules</NavLink>
+        <NavLink class="mobile-side-link" href="announcements">Announcements</NavLink>
+        <NavLink class="mobile-side-link" href="notifications">
+            Notifications
+            @if (Unread > 0)
+            {
+                <span class="mobile-side-count">@Unread</span>
+            }
+        </NavLink>
+        <NavLink class="mobile-side-link" href="settings/profile">Profile</NavLink>
+        <NavLink class="mobile-side-link" href="settings/account">Password</NavLink>
+        <button class="mobile-side-link mobile-side-button" type="button" @onclick="SignOut">Log out</button>
+    </nav>
+
+    <div class="mobile-body">
+        @ChildContent
+    </div>
+
+    <nav class="mobile-tabs" aria-label="Main">
+        <NavLink class="mobile-tab" href="dashboard" Match="NavLinkMatch.All">Home</NavLink>
+        <NavLink class="mobile-tab" href="children">Children</NavLink>
+        <NavLink class="mobile-tab" href="schedules">Schedule</NavLink>
+        <NavLink class="mobile-tab" href="notifications">
+            Alerts
+            @if (Unread > 0)
+            {
+                <span class="mobile-tab-dot"></span>
+            }
+        </NavLink>
+        <NavLink class="mobile-tab" href="settings/profile">Profile</NavLink>
+    </nav>
+</div>
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public int Unread { get; set; }
+
+    private void SignOut()
+    {
+        Session.SignOut();
+        Nav.NavigateTo("/");
+    }
+}

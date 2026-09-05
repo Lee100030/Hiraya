@@ -1,5 +1,321 @@
-﻿@page "/"
+﻿@page "/dashboard"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
 
-<h1>Hello, world!</h1>
+@if (Navigation.IsFamilyRole(Session.CurrentUser?.Role) || AppExperience.UseMobileUserShell(Session.CurrentUser))
+{
+    <MobileHomeDashboard />
+}
+else if (AppExperience.UseTeacherWorkspace(Session.CurrentUser))
+{
+    <TeacherHomeDashboard />
+}
+else
+{
+<div class="page-hero">
+    <SidebarUserCard CssClass="sidebar-user sidebar-user-light" />
+    <img class="page-hero-crest" src="images/hiraya-crest.png" alt="Hiraya Kids Learning Center" />
+    <div>
+        <p class="eyebrow">HIRAYA LEARNING CENTER</p>
+        <h1>@(isAdmin ? "Admin dashboard" : "Operations dashboard")</h1>
+        <p class="muted">@(db?.Settings.CenterName ?? "HIRAYA Learning Center Management System")</p>
+    </div>
+</div>
 
-Welcome to your new app.
+@if (db is null)
+{
+    <p>Loading…</p>
+}
+else if (isAdmin && admin is not null)
+{
+    @if (admin.Alerts.Count > 0)
+    {
+        <h2>Attention</h2>
+        <ul class="plain-list alert-list">
+            @foreach (var item in admin.Alerts)
+            {
+                <li>@item</li>
+            }
+        </ul>
+    }
+
+    <h2>Quick actions</h2>
+    <div class="action-grid">
+        <a class="btn btn-primary" href="students">Add student</a>
+        <a class="btn btn-outline-secondary" href="staff?role=teacher">Add teacher</a>
+        <a class="btn btn-outline-secondary" href="enrollment">New enrollment</a>
+        <a class="btn btn-outline-secondary" href="classes">Create class</a>
+        <a class="btn btn-outline-secondary" href="schedules">Create schedule</a>
+        <a class="btn btn-outline-secondary" href="payments">Record payment</a>
+        <a class="btn btn-outline-secondary" href="attendance">Record attendance</a>
+        <a class="btn btn-outline-secondary" href="calendar">Add calendar event</a>
+        <a class="btn btn-outline-secondary" href="reports">View reports</a>
+    </div>
+
+    <h2 class="mt-4">Students</h2>
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@admin.TotalStudents</strong><span>Total students</span></div>
+        <div class="stat-card"><strong>@admin.ActiveStudents</strong><span>Active students</span></div>
+        <div class="stat-card"><strong>@admin.NewStudents</strong><span>Newly enrolled (14 days)</span></div>
+        <div class="stat-card"><strong>@admin.InactiveStudents</strong><span>Inactive / archived</span></div>
+    </div>
+
+    <h2 class="mt-4">Teachers</h2>
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@admin.TotalTeachers</strong><span>Total teachers</span></div>
+        <div class="stat-card"><strong>@admin.ActiveTeachers</strong><span>Active teachers</span></div>
+        <div class="stat-card"><strong>@admin.TeacherPresentToday</strong><span>Teacher attendance today</span></div>
+    </div>
+
+    <h2 class="mt-4">Attendance today</h2>
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@admin.PresentToday</strong><span>Present</span></div>
+        <div class="stat-card"><strong>@admin.AbsentToday</strong><span>Absent</span></div>
+        <div class="stat-card"><strong>@admin.LateToday</strong><span>Late</span></div>
+        <div class="stat-card"><strong>@admin.ExcusedToday</strong><span>Excused</span></div>
+    </div>
+
+    <h2 class="mt-4">Enrollment</h2>
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@admin.PendingEnrollments</strong><span>Pending</span></div>
+        <div class="stat-card"><strong>@admin.ActiveEnrollments</strong><span>Active enrollments</span></div>
+    </div>
+    @if (admin.RecentlyEnrolled.Count > 0)
+    {
+        <p class="muted mt-2">Recently enrolled</p>
+        <ul class="plain-list">
+            @foreach (var row in admin.RecentlyEnrolled)
+            {
+                <li>@row</li>
+            }
+        </ul>
+    }
+
+    <h2 class="mt-4">Classes</h2>
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@admin.ActiveClasses</strong><span>Active classes</span></div>
+        <div class="stat-card"><strong>@admin.ClassesToday</strong><span>Today’s classes</span></div>
+        <div class="stat-card"><strong>@admin.UpcomingClasses</strong><span>Upcoming (7 days)</span></div>
+    </div>
+
+    <h2 class="mt-4">Payments</h2>
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@admin.TotalPayments</strong><span>Total payments</span></div>
+        <div class="stat-card"><strong>@admin.PaymentsToday</strong><span>Today’s payments</span></div>
+        <div class="stat-card"><strong>@admin.PendingPayments</strong><span>Pending / open</span></div>
+        <div class="stat-card"><strong>@admin.OverduePayments</strong><span>Overdue</span></div>
+    </div>
+
+    <h2 class="mt-4">Student progress</h2>
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@admin.RecentAssessments</strong><span>Recent assessments</span></div>
+        <div class="stat-card"><strong>@admin.NeedsAttention</strong><span>Needs support</span></div>
+    </div>
+    @if (admin.RecentProgress.Count > 0)
+    {
+        <ul class="plain-list mt-2">
+            @foreach (var row in admin.RecentProgress)
+            {
+                <li>@row</li>
+            }
+        </ul>
+    }
+
+    <h2 class="mt-4">Inbox</h2>
+    @if (alerts.Count == 0)
+    {
+        <p class="muted">No unread notifications. <a href="notifications">Open inbox</a></p>
+    }
+    else
+    {
+        <ul class="plain-list">
+            @foreach (var alert in alerts)
+            {
+                <li>
+                    <strong>@(string.IsNullOrWhiteSpace(alert.Title) ? NotificationKinds.Label(alert.Kind) : alert.Title)</strong>
+                    · @alert.Message
+                </li>
+            }
+        </ul>
+        <p><a href="notifications">Open inbox</a></p>
+    }
+
+    <h2 class="mt-4">Recent activity</h2>
+    @if (admin.RecentActivity.Count == 0)
+    {
+        <p class="muted">No recent audit entries.</p>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>When</th>
+                        <th>User</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var row in admin.RecentActivity)
+                {
+                    <tr>
+                        <td>@FormatWhen(row.CreatedAt)</td>
+                        <td>@row.ActorName</td>
+                        <td>@row.Summary</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+        <p><a href="audit">View complete audit logs</a></p>
+    }
+}
+else
+{
+    <div class="stat-grid">
+        <div class="stat-card"><strong>@studentCount</strong><span>Students</span></div>
+        <div class="stat-card"><strong>@activeCount</strong><span>Active students</span></div>
+        <div class="stat-card"><strong>@teacherCount</strong><span>Teachers</span></div>
+        <div class="stat-card"><strong>@staffCount</strong><span>Staff</span></div>
+        <div class="stat-card"><strong>@todayPresent</strong><span>Present today</span></div>
+        <div class="stat-card"><strong>@todayAbsent</strong><span>Absent today</span></div>
+        <div class="stat-card"><strong>@todayLate</strong><span>Late today</span></div>
+        <div class="stat-card"><strong>@pendingPayments</strong><span>Open payments</span></div>
+        <div class="stat-card"><strong>@overduePayments</strong><span>Overdue payments</span></div>
+        <div class="stat-card"><strong>@pendingEnrollments</strong><span>Pending enrollments</span></div>
+        <div class="stat-card"><strong>@publishedProgress</strong><span>Published progress</span></div>
+        <div class="stat-card"><strong>@draftProgress</strong><span>Draft progress</span></div>
+        <div class="stat-card"><strong>@unreadNotifications</strong><span>Unread notifications</span></div>
+    </div>
+
+    <h2 class="mt-4">Notifications</h2>
+    @if (alerts.Count == 0)
+    {
+        <p class="muted">No unread notifications. <a href="notifications">Open inbox</a></p>
+    }
+    else
+    {
+        <ul class="plain-list">
+            @foreach (var alert in alerts)
+            {
+                <li>
+                    <strong>@(string.IsNullOrWhiteSpace(alert.Title) ? NotificationKinds.Label(alert.Kind) : alert.Title)</strong>
+                    · @alert.Message
+                </li>
+            }
+        </ul>
+        <p><a href="notifications">Open inbox</a></p>
+    }
+
+    <h2 class="mt-4">Announcements</h2>
+    @if (news.Count == 0)
+    {
+        <p class="muted">No published announcements. <a href="announcements">View all</a></p>
+    }
+    else
+    {
+        <ul class="plain-list">
+            @foreach (var item in news)
+            {
+                <li><strong>@item.Title</strong> · @item.Body</li>
+            }
+        </ul>
+        <p><a href="announcements">View announcements</a></p>
+    }
+
+    @if (Session.CurrentUser?.Role == UserRoles.Parent)
+    {
+        <h2 class="mt-4">Your children</h2>
+        <ul class="plain-list">
+            @foreach (var student in children)
+            {
+                <li>@StudentNames.Display(student) · @student.Program</li>
+            }
+        </ul>
+    }
+}
+}
+
+@code {
+    private HirayaDatabase? db;
+    private bool isAdmin;
+    private AdminDashboardSnapshot? admin;
+    private int studentCount;
+    private int activeCount;
+    private int teacherCount;
+    private int staffCount;
+    private int todayPresent;
+    private int todayAbsent;
+    private int todayLate;
+    private int pendingPayments;
+    private int overduePayments;
+    private int pendingEnrollments;
+    private int publishedProgress;
+    private int draftProgress;
+    private int unreadNotifications;
+    private List<SystemAlert> alerts = [];
+    private List<NewsItem> news = [];
+    private List<Student> children = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/");
+            return;
+        }
+
+        if (Navigation.IsFamilyRole(Session.CurrentUser?.Role) ||
+            AppExperience.UseMobileUserShell(Session.CurrentUser) ||
+            AppExperience.UseTeacherWorkspace(Session.CurrentUser))
+            return;
+
+        db = await Repository.LoadAsync();
+        var user = Session.CurrentUser!;
+        isAdmin = Navigation.CanAccessAdminPanel(user.Role);
+        if (isAdmin)
+            admin = AdminDashboardService.Build(db);
+
+        var students = db.Students.AsEnumerable();
+        if (user.Role == UserRoles.Parent)
+            students = students.Where(s => s.ParentId == user.UserId);
+
+        var list = students.ToList();
+        children = list;
+        studentCount = list.Count;
+        activeCount = list.Count(s => string.Equals(s.Status, "active", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(s.Status));
+        teacherCount = db.Users.Count(u =>
+            u.Role == UserRoles.Teacher &&
+            !string.Equals(u.Status, "archived", StringComparison.OrdinalIgnoreCase));
+        staffCount = db.Users.Count(u =>
+            u.Role == UserRoles.Staff &&
+            !string.Equals(u.Status, "archived", StringComparison.OrdinalIgnoreCase));
+        var today = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
+        var todayRecords = db.Attendance.Where(a =>
+            a.Kind != AttendanceKinds.Employee &&
+            AttendanceService.DateKey(a.AttendanceDate) == today);
+        todayPresent = todayRecords.Count(a =>
+            string.IsNullOrEmpty(a.Status) || a.Status == AttendanceStatuses.Present);
+        todayAbsent = todayRecords.Count(a => a.Status == AttendanceStatuses.Absent);
+        todayLate = todayRecords.Count(a => a.Status == AttendanceStatuses.Late);
+        var visiblePayments = PaymentService.Visible(db, user).ToList();
+        pendingPayments = visiblePayments.Count(p => PaymentStatuses.IsOpen(PaymentService.EffectiveStatus(p)));
+        overduePayments = visiblePayments.Count(p => PaymentService.EffectiveStatus(p) == PaymentStatuses.Overdue);
+        pendingEnrollments = db.Enrollments.Count(e => e.Status is "pending" or "pending_review");
+        var progress = ProgressService.Visible(db, user).ToList();
+        publishedProgress = progress.Count(r => r.Status == ProgressStatuses.Published);
+        draftProgress = progress.Count(r => r.Status == ProgressStatuses.Draft);
+        alerts = NotificationService.Inbox(db, user).Where(a => !a.Read).Take(8).ToList();
+        unreadNotifications = NotificationService.UnreadCount(db, user);
+        news = NotificationService.PublishedNews(db).Take(3).ToList();
+    }
+
+    private static string FormatWhen(string iso)
+    {
+        if (!DateTime.TryParse(iso, out var value))
+            return iso;
+        return value.ToLocalTime().ToString("MMM d, yyyy h:mm tt");
+    }
+}

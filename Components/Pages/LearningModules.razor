@@ -1,0 +1,416 @@
+@page "/modules"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject LearningModuleClient Modules
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<h1>Learning modules</h1>
+@if (isAdmin)
+{
+    <p class="muted">Upload teaching guides and control which classes can use them. Teachers only see published modules assigned to their program or class.</p>
+}
+else if (isFamily)
+{
+    <p class="muted">Resources published for the selected child’s program or class.</p>
+    <FamilyChildPicker Changed="ReloadAsync" />
+}
+else
+{
+    <p class="muted">Guides published for your assigned classes. Download or preview files to use in teaching.</p>
+}
+
+@if (!Navigation.CanViewLearningModules(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to learning modules.</p>
+}
+else if (loading)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status)) { <p class="ok">@status</p> }
+    @if (!string.IsNullOrEmpty(error)) { <p class="text-danger">@error</p> }
+
+    <div class="toolbar">
+        <input class="form-control" placeholder="Search title, subject, or file" @bind="query" @bind:event="oninput" />
+        <select class="form-select" @bind="programFilter">
+            <option value="">All programs</option>
+            @foreach (var program in programs)
+            {
+                <option value="@program.ProgramId">@program.Name</option>
+            }
+        </select>
+        <select class="form-select" @bind="subjectFilter">
+            <option value="">All subjects</option>
+            @foreach (var subject in subjects)
+            {
+                <option value="@subject">@subject</option>
+            }
+        </select>
+        @if (isAdmin)
+        {
+            <select class="form-select" @bind="statusFilter">
+                <option value="open">Active</option>
+                <option value="@LearningModuleStatuses.Draft">Draft</option>
+                <option value="@LearningModuleStatuses.Published">Published</option>
+                <option value="@LearningModuleStatuses.Archived">Archived</option>
+                <option value="">All</option>
+            </select>
+        }
+        <select class="form-select" @bind="sort">
+            <option value="updated">Newest</option>
+            <option value="title">Title</option>
+            <option value="subject">Subject</option>
+        </select>
+    </div>
+
+    @if (isAdmin)
+    {
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Module</th>
+                        <th>Program / class</th>
+                        <th>Version</th>
+                        <th>Status</th>
+                        <th>Updated</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @if (!Filtered.Any())
+                {
+                    <tr><td colspan="6" class="muted">No modules match the current filters.</td></tr>
+                }
+                @foreach (var item in Filtered)
+                {
+                    <tr>
+                        <td>
+                            @item.Title
+                            <div class="muted">@item.Subject · @item.ModuleType · @item.FileName</div>
+                        </td>
+                        <td>@ProgramName(item.ProgramId)<div class="muted">@ClassNames(item)</div></td>
+                        <td>@item.Version</td>
+                        <td>@LearningModuleStatuses.Label(item.Status)</td>
+                        <td>@FormatWhen(item.UpdatedAt)</td>
+                        <td>
+                            <a class="btn btn-sm btn-outline-secondary" href="@($"modules/{item.ModuleId}")">View</a>
+                            <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Edit(item)">Edit</button>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+
+        <h2 class="mt-4">@(string.IsNullOrEmpty(form.ModuleId) ? "Add / upload module" : "Edit module")</h2>
+        <EditForm Model="form" OnValidSubmit="SaveAsync">
+            <div class="form-grid">
+                <div class="full"><label class="form-label">Title</label><InputText class="form-control" @bind-Value="form.Title" /></div>
+                <div class="full"><label class="form-label">Description</label><InputTextArea class="form-control" @bind-Value="form.Description" /></div>
+                <div>
+                    <label class="form-label">Program</label>
+                    <InputSelect class="form-select" @bind-Value="form.ProgramId">
+                        <option value="">Not set</option>
+                        @foreach (var program in programs)
+                        {
+                            <option value="@program.ProgramId">@program.Name</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div><label class="form-label">Subject / activity</label><InputText class="form-control" @bind-Value="form.Subject" /></div>
+                <div><label class="form-label">Grade / age level</label><InputText class="form-control" @bind-Value="form.GradeLevel" /></div>
+                <div>
+                    <label class="form-label">Module type</label>
+                    <InputSelect class="form-select" @bind-Value="form.ModuleType">
+                        @foreach (var type in LearningModuleTypes.All)
+                        {
+                            <option value="@type">@type</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="full">
+                    <label class="form-label">Classes that can use this module</label>
+                    <div class="choice-list">
+                        @foreach (var item in classes)
+                        {
+                            <label class="choice"><input type="checkbox" checked="@form.ClassIds.Contains(item.ClassId)" @onchange="e => ToggleClass(item.ClassId, (bool)(e.Value ?? false))" /> @item.Name</label>
+                        }
+                    </div>
+                    <p class="muted">Leave empty to share with every teacher in the selected program (or all teachers if no program is set).</p>
+                </div>
+                <div class="full">
+                    <button class="btn btn-outline-secondary" type="button" @onclick="ChooseFileAsync">Choose file</button>
+                    <InputFile class="profile-file-input" OnChange="OnFile" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png,.webp,.gif" />
+                    <p class="muted">@(pendingName is null ? "PDF, Word, PowerPoint, Excel, or image. Max 25 MB unless changed in system settings." : $"Selected: {pendingName} ({FormatSize(pendingBytes?.Length ?? 0)})")</p>
+                </div>
+                <div><label class="form-label">Version (optional)</label><InputText class="form-control" @bind-Value="form.Version" placeholder="v1.0" /></div>
+                <div class="full"><label class="form-label">Change notes</label><InputText class="form-control" @bind-Value="form.ChangeDescription" placeholder="Initial module" /></div>
+                <div><label class="choice"><InputCheckbox @bind-Value="form.Publish" /> Publish immediately</label></div>
+                <div><label class="choice"><InputCheckbox @bind-Value="form.NotifyTeachers" /> Notify assigned teachers</label></div>
+            </div>
+            @if (uploadProgress > 0 && uploadProgress < 100)
+            {
+                <p>Uploading… @uploadProgress%</p>
+                <progress value="@uploadProgress" max="100"></progress>
+            }
+            <button class="btn btn-primary mt-3" type="submit" disabled="@busy">@(busy ? "Saving…" : "Save module")</button>
+            <button class="btn btn-link mt-3" type="button" @onclick="Clear">Clear</button>
+        </EditForm>
+    }
+    else
+    {
+        <div class="module-grid">
+            @if (!Filtered.Any())
+            {
+                <div class="mobile-card"><p class="muted mb-0">No published modules are available for this child yet.</p></div>
+            }
+            @foreach (var item in Filtered)
+            {
+                <article class="module-card">
+                    <p class="eyebrow">@item.ModuleType · @item.FileType.TrimStart('.').ToUpperInvariant()</p>
+                    <h3>@item.Title</h3>
+                    <p>@(string.IsNullOrWhiteSpace(item.Description) ? "No description." : item.Description)</p>
+                    <p class="muted">@item.Subject · @ProgramName(item.ProgramId)</p>
+                    <p class="muted">@item.Version · Updated @FormatWhen(item.UpdatedAt)</p>
+                    <div class="toolbar">
+                        <a class="btn btn-primary" href="@($"modules/{item.ModuleId}")">View module</a>
+                        <button class="btn btn-outline-secondary" type="button" @onclick="() => DownloadAsync(item.ModuleId)">Download</button>
+                    </div>
+                </article>
+            }
+        </div>
+    }
+}
+
+@code {
+    private bool loading = true;
+    private bool busy;
+    private bool isAdmin;
+    private bool isFamily;
+    private string? status;
+    private string? error;
+    private string query = "";
+    private string programFilter = "";
+    private string subjectFilter = "";
+    private string statusFilter = "open";
+    private string sort = "updated";
+    private int uploadProgress;
+    private List<LearningModule> items = [];
+    private List<LearningProgram> programs = [];
+    private List<LearningClass> classes = [];
+    private HashSet<string> familyClassIds = [];
+    private HashSet<string> familyProgramIds = [];
+    private LearningModuleSaveRequest form = new();
+    private byte[]? pendingBytes;
+    private string? pendingName;
+    private IEnumerable<string> subjects => items.Select(i => i.Subject).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s);
+
+    private IEnumerable<LearningModule> Filtered
+    {
+        get
+        {
+            var q = query.Trim();
+            IEnumerable<LearningModule> list = items;
+            if (!string.IsNullOrEmpty(programFilter))
+                list = list.Where(m => m.ProgramId == programFilter);
+            if (!string.IsNullOrEmpty(subjectFilter))
+                list = list.Where(m => string.Equals(m.Subject, subjectFilter, StringComparison.OrdinalIgnoreCase));
+            if (isAdmin)
+            {
+                list = statusFilter switch
+                {
+                    "open" => list.Where(m => m.Status != LearningModuleStatuses.Archived),
+                    "" => list,
+                    _ => list.Where(m => m.Status == statusFilter)
+                };
+            }
+            if (isFamily)
+            {
+                list = list.Where(m =>
+                    (m.ClassIds.Count > 0 && m.ClassIds.Any(familyClassIds.Contains)) ||
+                    (m.ClassIds.Count == 0 && (string.IsNullOrWhiteSpace(m.ProgramId) || familyProgramIds.Contains(m.ProgramId))));
+            }
+            {
+                list = list.Where(m =>
+                    m.Title.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    m.Subject.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    m.FileName.Contains(q, StringComparison.OrdinalIgnoreCase));
+            }
+            return sort switch
+            {
+                "title" => list.OrderBy(m => m.Title),
+                "subject" => list.OrderBy(m => m.Subject).ThenBy(m => m.Title),
+                _ => list.OrderByDescending(m => m.UpdatedAt)
+            };
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        isAdmin = Navigation.CanManageLearningModules(Session.CurrentUser?.Role);
+        isFamily = Navigation.IsFamilyRole(Session.CurrentUser?.Role);
+        await ReloadAsync();
+        loading = false;
+    }
+
+    private async Task ReloadAsync()
+    {
+        var db = await Repository.LoadAsync();
+        programs = db.Programs.OrderBy(p => p.Name).ToList();
+        classes = db.Classes.Where(c => c.Status != "archived").OrderBy(c => c.Name).ToList();
+        items = await Modules.ListAsync(Session.CurrentUser!, includeHidden: isAdmin);
+        familyClassIds = [];
+        familyProgramIds = [];
+        if (isFamily)
+        {
+            var selected = Session.SelectedStudentId;
+            var studentIds = string.IsNullOrWhiteSpace(selected)
+                ? FamilyPortal.StudentIds(db, Session.CurrentUser!)
+                : new HashSet<string> { selected };
+            familyClassIds = FamilyPortal.ClassIdsForStudents(db, studentIds);
+            familyProgramIds = db.Classes.Where(c => familyClassIds.Contains(c.ClassId)).Select(c => c.ProgramId).ToHashSet();
+        }
+    }
+
+    private void ToggleClass(string classId, bool on)
+    {
+        if (on && !form.ClassIds.Contains(classId))
+            form.ClassIds.Add(classId);
+        if (!on)
+            form.ClassIds.Remove(classId);
+    }
+
+    private void Edit(LearningModule item)
+    {
+        form = new LearningModuleSaveRequest
+        {
+            ModuleId = item.ModuleId,
+            Title = item.Title,
+            Description = item.Description,
+            ProgramId = item.ProgramId,
+            Subject = item.Subject,
+            GradeLevel = item.GradeLevel,
+            ModuleType = item.ModuleType,
+            ClassIds = [.. item.ClassIds],
+            Version = item.Version,
+            Publish = item.Status == LearningModuleStatuses.Published,
+            NotifyTeachers = false
+        };
+        pendingBytes = null;
+        pendingName = null;
+    }
+
+    private void Clear()
+    {
+        form = new LearningModuleSaveRequest { NotifyTeachers = true };
+        pendingBytes = null;
+        pendingName = null;
+    }
+
+    private async Task ChooseFileAsync()
+    {
+        error = null;
+        try
+        {
+            FileResult? picked = null;
+            await MainThread.InvokeOnMainThreadAsync(async () =>
+            {
+                picked = await FilePicker.Default.PickAsync();
+            });
+            if (picked is null) return;
+            await using var stream = await picked.OpenReadAsync();
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            pendingBytes = ms.ToArray();
+            pendingName = picked.FileName;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task OnFile(InputFileChangeEventArgs e)
+    {
+        error = null;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(LearningModuleRules.DefaultMaxMb * 1024L * 1024L);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            pendingBytes = ms.ToArray();
+            pendingName = e.File.Name;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        error = null;
+        busy = true;
+        uploadProgress = 5;
+        try
+        {
+            var progress = new Progress<int>(value =>
+            {
+                uploadProgress = value;
+                InvokeAsync(StateHasChanged);
+            });
+            await Modules.SaveAsync(form, Session.CurrentUser!, pendingBytes, pendingName, progress);
+            status = "Module saved.";
+            Clear();
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+            uploadProgress = 0;
+        }
+    }
+
+    private async Task DownloadAsync(string id)
+    {
+        error = null;
+        try
+        {
+            var file = await Modules.OpenFileAsync(id, Session.CurrentUser!);
+            await JS.InvokeVoidAsync("hirayaDownload", file.FileName, Convert.ToBase64String(file.Bytes), file.ContentType);
+            status = "Download started.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private string ProgramName(string id) =>
+        programs.FirstOrDefault(p => p.ProgramId == id)?.Name ?? (string.IsNullOrWhiteSpace(id) ? "All programs" : id);
+
+    private string ClassNames(LearningModule item)
+    {
+        if (item.ClassIds.Count == 0) return "Program-wide";
+        return string.Join(", ", classes.Where(c => item.ClassIds.Contains(c.ClassId)).Select(c => c.Name));
+    }
+
+    private static string FormatWhen(string? value) =>
+        DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy") : "—";
+
+    private static string FormatSize(long bytes) =>
+        bytes < 1024 ? $"{bytes} B" : bytes < 1024 * 1024 ? $"{bytes / 1024.0:0} KB" : $"{bytes / (1024.0 * 1024):0.0} MB";
+}

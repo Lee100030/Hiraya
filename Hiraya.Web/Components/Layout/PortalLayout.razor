@@ -1,0 +1,80 @@
+@inherits LayoutComponentBase
+@layout PublicLayout
+@inject WebSessionService Session
+@inject NavigationManager Nav
+
+<div class="portal-shell @ShellClass">
+    @if (Session.CurrentUser is { } user)
+    {
+        <a class="sidebar-user sidebar-user-light" href="@(Navigation.IsFamilyRole(user.Role) ? "/portal/family" : "/portal/teacher")">
+            <span class="sidebar-user-initials">@Initials(user)</span>
+            <span class="sidebar-user-text">
+                <strong>@user.Fullname</strong>
+                <small>@Navigation.RoleLabel(user.Role)</small>
+            </span>
+        </a>
+    }
+    <p class="eyebrow">@Banner</p>
+    @if (Navigation.IsFamilyRole(Session.CurrentUser?.Role))
+    {
+        <nav class="portal-tabs">
+            <NavLink href="/portal/family" Match="NavLinkMatch.All">My children</NavLink>
+            <a href="/">Public site</a>
+            <button class="nav-text" type="button" @onclick="SignOut">Sign out</button>
+        </nav>
+    }
+    else if (Session.CurrentUser?.Role == UserRoles.Teacher)
+    {
+        <nav class="portal-tabs">
+            <NavLink href="/portal/teacher" Match="NavLinkMatch.All">Teaching overview</NavLink>
+            <NavLink href="/portal/teacher/modules">Learning modules</NavLink>
+            <a href="/">Public site</a>
+            <button class="nav-text" type="button" @onclick="SignOut">Sign out</button>
+        </nav>
+    }
+    else
+    {
+        <nav class="portal-tabs">
+            <NavLink href="/portal/staff" Match="NavLinkMatch.All">Center snapshot</NavLink>
+            <a href="/">Public site</a>
+            <button class="nav-text" type="button" @onclick="SignOut">Sign out</button>
+        </nav>
+    }
+    <section class="portal-body">
+        @Body
+    </section>
+</div>
+
+@code {
+    private string ShellClass =>
+        Navigation.IsFamilyRole(Session.CurrentUser?.Role) ? "portal-family" :
+        Session.CurrentUser?.Role == UserRoles.Teacher ? "portal-teacher" :
+        "portal-staff";
+
+    private string Banner =>
+        Navigation.IsFamilyRole(Session.CurrentUser?.Role) ? "Parent web dashboard" :
+        Session.CurrentUser?.Role == UserRoles.Teacher ? "Teacher web dashboard" :
+        "Authorized staff web view";
+
+    protected override void OnInitialized()
+    {
+        if (!Session.IsLoggedIn)
+            Nav.NavigateTo("/login");
+    }
+
+    private void SignOut()
+    {
+        Session.SignOut();
+        Nav.NavigateTo("/");
+    }
+
+    private static string Initials(HirayaUser user)
+    {
+        var first = (user.FirstName ?? "").Trim();
+        var last = (user.LastName ?? "").Trim();
+        if (first.Length > 0 && last.Length > 0)
+            return $"{char.ToUpperInvariant(first[0])}{char.ToUpperInvariant(last[0])}";
+        var name = (user.Fullname ?? "").Trim();
+        return name.Length == 0 ? "U" : char.ToUpperInvariant(name[0]).ToString();
+    }
+}

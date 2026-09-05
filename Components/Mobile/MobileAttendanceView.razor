@@ -1,0 +1,78 @@
+@inject SessionService Session
+@inject IHirayaRepository Repository
+
+<h1>Attendance</h1>
+<p class="muted">Recent records for the selected child.</p>
+<FamilyChildPicker Changed="LoadAsync" />
+
+@if (rows is null)
+{
+    <FamilyState Mode="loading" />
+}
+else if (rows.Count == 0)
+{
+    <FamilyState Message="No attendance has been posted yet." />
+}
+else
+{
+    <div class="record-stack">
+        @foreach (var row in rows)
+        {
+            <article class="mobile-card">
+                <p class="eyebrow">@row.When</p>
+                <strong>@row.Status</strong>
+                <p class="muted mb-0">@row.ClassName</p>
+                @if (!string.IsNullOrWhiteSpace(row.Time))
+                {
+                    <p class="muted mb-0">@row.Time</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(row.Teacher))
+                {
+                    <p class="muted mb-0">Teacher: @row.Teacher</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(row.Notes))
+                {
+                    <p class="mb-0">@row.Notes</p>
+                }
+            </article>
+        }
+    </div>
+}
+
+@code {
+    private List<Row>? rows;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        if (Session.CurrentUser is null)
+            return;
+        var db = await Repository.LoadAsync();
+        var kids = FamilyPortal.VisibleStudents(db, Session.CurrentUser)
+            .ToDictionary(s => s.StudentId);
+        var selected = Session.SelectedStudentId;
+        var teachers = db.Users.ToDictionary(u => u.UserId, u => u.Fullname);
+        rows = db.Attendance
+            .Where(a => a.Kind != AttendanceKinds.Employee && kids.ContainsKey(a.StudentId))
+            .Where(a => string.IsNullOrEmpty(selected) || a.StudentId == selected)
+            .OrderByDescending(a => a.AttendanceDate)
+            .Take(40)
+            .Select(a =>
+            {
+                var cls = db.Classes.FirstOrDefault(c => c.ClassId == a.ClassId);
+                var when = DateTime.TryParse(a.AttendanceDate, out var d) ? d.ToString("MMMM d, yyyy") : a.AttendanceDate;
+                var teacher = cls is null ? "" : teachers.GetValueOrDefault(cls.TeacherId, "");
+                return new Row(
+                    when,
+                    FamilyPortal.AttendanceLabel(a.Status),
+                    cls?.Name ?? "Class",
+                    string.IsNullOrWhiteSpace(a.TimeIn) ? "" : a.TimeIn,
+                    teacher,
+                    a.Notes);
+            })
+            .ToList();
+    }
+
+    private sealed record Row(string When, string Status, string ClassName, string Time, string Teacher, string Notes);
+}

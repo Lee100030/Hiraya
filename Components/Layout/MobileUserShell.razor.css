@@ -1,0 +1,246 @@
+.mobile-app {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    background: #f7f1e1;
+    color: #1a2e26;
+}
+
+.mobile-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    background: #0B3D2E;
+    color: #f7f1e1;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+}
+
+.mobile-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #f7f1e1;
+    text-decoration: none;
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-size: clamp(1.15rem, 2vw, 1.5rem);
+    font-weight: 700;
+}
+
+.mobile-brand img {
+    width: clamp(32px, 5vw, 44px);
+    height: clamp(32px, 5vw, 44px);
+    object-fit: contain;
+}
+
+.mobile-top-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.mobile-top-start {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.mobile-back-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 48px;
+    min-width: 48px;
+    padding: 10px 14px;
+    border: 1px solid rgba(212, 175, 55, 0.55);
+    border-radius: 999px;
+    background: transparent;
+    color: #f7f1e1;
+    font-weight: 600;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+}
+
+.staff-mobile-notice .mobile-back-btn {
+    color: #0B3D2E;
+    border-color: #D4AF37;
+    margin-bottom: 12px;
+}
+    position: relative;
+    color: #f7f1e1;
+    text-decoration: none;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 10px 12px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(212, 175, 55, 0.55);
+    border-radius: 999px;
+    background: transparent;
+}
+
+.mobile-badge {
+    position: absolute;
+    top: -6px;
+    right: -4px;
+    min-width: 1.1rem;
+    height: 1.1rem;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: #D4AF37;
+    color: #041009;
+    font-size: 0.65rem;
+    line-height: 1.1rem;
+    text-align: center;
+}
+
+.mobile-side {
+    display: none;
+}
+
+.mobile-body {
+    flex: 1;
+    width: min(100%, 72rem);
+    margin: 0 auto;
+    padding: 16px 16px calc(92px + env(safe-area-inset-bottom));
+}
+
+.mobile-tabs {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    background: #041009;
+    padding: 6px 4px calc(8px + env(safe-area-inset-bottom));
+    z-index: 20;
+}
+
+.mobile-tab {
+    position: relative;
+    color: #c5d0c4;
+    text-decoration: none;
+    text-align: center;
+    font-size: clamp(0.62rem, 2.4vw, 0.78rem);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 12px 2px;
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+}
+
+.mobile-tab.active {
+    color: #041009;
+    background: #D4AF37;
+}
+
+.mobile-tab-dot {
+    position: absolute;
+    top: 6px;
+    right: 18%;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #D4AF37;
+}
+
+.mobile-side-link.active {
+    background: #D4AF37;
+    color: #041009;
+}
+
+.mobile-side-count {
+    margin-left: auto;
+    background: #D4AF37;
+    color: #041009;
+    border-radius: 999px;
+    min-width: 1.4rem;
+    text-align: center;
+    font-size: 0.75rem;
+}
+
+.mobile-side-button {
+    width: 100%;
+    border: 0;
+    text-align: left;
+    cursor: pointer;
+}
+
+@media (min-width: 768px) {
+    .mobile-app {
+        display: grid;
+        grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr);
+        grid-template-rows: auto 1fr;
+    }
+
+    .mobile-top {
+        grid-column: 1 / -1;
+    }
+
+    .mobile-side {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 16px 12px calc(16px + env(safe-area-inset-bottom));
+        background: #0B3D2E;
+        overflow: auto;
+    }
+
+    .mobile-side-link {
+        color: #f7f1e1;
+        text-decoration: none;
+        font-weight: 600;
+        padding: 12px 14px;
+        min-height: 48px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .mobile-tabs,
+    .mobile-top-profile,
+    .mobile-top-start .mobile-back-btn {
+        display: none;
+    }
+
+    .mobile-body {
+        padding: 24px clamp(16px, 3vw, 32px) 32px;
+        width: 100%;
+        max-width: none;
+    }
+}
+
+@media (min-width: 1024px) {
+    .mobile-app {
+        grid-template-columns: 17rem minmax(0, 1fr);
+    }
+
+    .mobile-body {
+        padding-right: clamp(24px, 5vw, 48px);
+    }
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+    .mobile-tabs {
+        padding-top: 4px;
+        padding-bottom: calc(4px + env(safe-area-inset-bottom));
+    }
+
+    .mobile-tab {
+        min-height: 40px;
+        padding: 8px 2px;
+    }
+}

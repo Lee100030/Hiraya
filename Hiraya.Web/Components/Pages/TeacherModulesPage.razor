@@ -1,0 +1,119 @@
+@page "/portal/teacher/modules"
+@layout PortalLayout
+@inject WebSessionService Session
+@inject IHirayaRepository Repository
+@inject LearningModuleClient Modules
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Learning modules · HIRAYA</PageTitle>
+
+<p class="eyebrow">Teacher portal</p>
+<h1>Learning modules</h1>
+<p class="lead">Published guides for your assigned classes. Preview PDFs and images here, or download Office files.</p>
+
+@if (!string.IsNullOrEmpty(error)) { <p class="form-error">@error</p> }
+
+<div class="form-stack" style="max-width:none;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:16px;">
+    <label>Search<input @bind="query" @bind:event="oninput" /></label>
+    <label>Program
+        <select @bind="programFilter">
+            <option value="">All</option>
+            @foreach (var program in programs)
+            {
+                <option value="@program.ProgramId">@program.Name</option>
+            }
+        </select>
+    </label>
+    <label>Subject
+        <select @bind="subjectFilter">
+            <option value="">All</option>
+            @foreach (var subject in subjects)
+            {
+                <option value="@subject">@subject</option>
+            }
+        </select>
+    </label>
+</div>
+
+@if (loading)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="module-grid">
+        @if (!Filtered.Any())
+        {
+            <article class="info-card"><p>No published modules are assigned to your classes yet.</p></article>
+        }
+        @foreach (var item in Filtered)
+        {
+            <article class="module-card">
+                <p class="eyebrow">@item.ModuleType</p>
+                <h3>@item.Title</h3>
+                <p>@(string.IsNullOrWhiteSpace(item.Description) ? "No description." : item.Description)</p>
+                <p>@ProgramName(item.ProgramId) · @item.Subject · @item.Version · Updated @FormatWhen(item.UpdatedAt)</p>
+                <p>
+                    <a class="btn btn-primary" href="@($"/portal/teacher/modules/{item.ModuleId}")">View module</a>
+                    <button class="btn btn-ghost" type="button" @onclick="() => DownloadAsync(item.ModuleId)">Download</button>
+                </p>
+            </article>
+        }
+    </div>
+}
+
+@code {
+    private bool loading = true;
+    private string query = "";
+    private string programFilter = "";
+    private string subjectFilter = "";
+    private string? error;
+    private List<LearningModule> items = [];
+    private List<LearningProgram> programs = [];
+    private IEnumerable<string> subjects => items.Select(i => i.Subject).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().OrderBy(s => s);
+    private IEnumerable<LearningModule> Filtered => items
+        .Where(m => string.IsNullOrEmpty(programFilter) || m.ProgramId == programFilter)
+        .Where(m => string.IsNullOrEmpty(subjectFilter) || string.Equals(m.Subject, subjectFilter, StringComparison.OrdinalIgnoreCase))
+        .Where(m => string.IsNullOrEmpty(query) || m.Title.Contains(query, StringComparison.OrdinalIgnoreCase) || m.Subject.Contains(query, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn || Session.CurrentUser!.Role != UserRoles.Teacher)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        try
+        {
+            var db = await Repository.LoadAsync();
+            programs = db.Programs.OrderBy(p => p.Name).ToList();
+            items = await Modules.ListAsync(Session.CurrentUser);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        loading = false;
+    }
+
+    private async Task DownloadAsync(string id)
+    {
+        try
+        {
+            var file = await Modules.OpenFileAsync(id, Session.CurrentUser!);
+            await JS.InvokeVoidAsync("hirayaDownload", file.FileName, Convert.ToBase64String(file.Bytes), file.ContentType);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private string ProgramName(string programId) =>
+        programs.FirstOrDefault(p => p.ProgramId == programId)?.Name
+        ?? (string.IsNullOrWhiteSpace(programId) ? "All programs" : programId);
+
+    private static string FormatWhen(string? value) =>
+        DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy") : "—";
+}

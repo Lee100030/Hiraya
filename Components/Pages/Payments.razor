@@ -1,0 +1,484 @@
+@page "/payments"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject PaymentService PaymentApi
+@inject NavigationManager Nav
+
+@if (AppExperience.UseMobileUserShell(Session.CurrentUser))
+{
+    <MobilePaymentsView />
+}
+else
+{
+<h1>Payments</h1>
+<p class="muted">Charges are tied to enrollments. Open balances can be pending, partial, or overdue. Collected amounts are never stored as card numbers.</p>
+
+@if (!Navigation.CanViewPayments(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status))
+    {
+        <p class="ok">@status</p>
+    }
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="text-danger">@error</p>
+    }
+
+    <div class="stat-grid">
+        <div class="stat-card">
+            <strong>₱@openBalance.ToString("N0")</strong>
+            <span>Open balance</span>
+        </div>
+        <div class="stat-card">
+            <strong>@overdueCount</strong>
+            <span>Overdue</span>
+        </div>
+        <div class="stat-card">
+            <strong>₱@collectedMonth.ToString("N0")</strong>
+            <span>Collected this month</span>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <input class="form-control" placeholder="Search student, reference, or notes" @bind="query" @bind:event="oninput" />
+        <select class="form-select" @bind="statusFilter">
+            <option value="">All statuses</option>
+            <option value="open">Open</option>
+            @foreach (var value in PaymentStatuses.All)
+            {
+                <option value="@value">@value</option>
+            }
+        </select>
+        <select class="form-select" @bind="studentFilter">
+            <option value="">All students</option>
+            @foreach (var student in filterStudents)
+            {
+                <option value="@student.StudentId">@StudentNames.Display(student)</option>
+            }
+        </select>
+    </div>
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Student</th>
+                    <th>Due</th>
+                    <th>Billed</th>
+                    <th>Collected</th>
+                    <th>Remaining</th>
+                    <th>Method</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!Filtered.Any())
+                {
+                    <tr><td colspan="8" class="muted">No payments match the current filters.</td></tr>
+                }
+                @foreach (var row in Filtered)
+                {
+                    <tr>
+                        <td>
+                            @row.StudentName
+                            <div class="muted">@row.Period</div>
+                        </td>
+                        <td>@row.Due</td>
+                        <td>₱@row.Item.Amount.ToString("N2")</td>
+                        <td>₱@row.Item.AmountPaid.ToString("N2")</td>
+                        <td>₱@PaymentService.Remaining(row.Item).ToString("N2")</td>
+                        <td>@PaymentMethods.Label(row.Item.PaymentMethod)</td>
+                        <td>@row.Effective</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Select(row.Item)">History</button>
+                            @if (canManage && PaymentStatuses.IsOpen(row.Effective))
+                            {
+                                <button class="btn btn-sm btn-primary" type="button" @onclick="() => BeginCollect(row.Item)">Collect</button>
+                                <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => MarkPaidAsync(row.Item.PaymentId)">Mark paid</button>
+                                @if (row.Item.AmountPaid <= 0)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => CancelAsync(row.Item.PaymentId)">Cancel</button>
+                                }
+                            }
+                            @if (canManage && row.Item.AmountPaid > 0 && row.Effective is PaymentStatuses.Paid or PaymentStatuses.Partial or PaymentStatuses.Overdue)
+                            {
+                                <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => RefundAsync(row.Item.PaymentId)">Refund</button>
+                            }
+                            @if (canManage && PaymentStatuses.IsOpen(row.Effective))
+                            {
+                                <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Edit(row.Item)">Edit</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (selected != null)
+    {
+        <h2 class="mt-4">Charge history</h2>
+        <p class="muted">@StudentLabel(PaymentService.ResolveStudentId(db, selected)) · @selected.Notes</p>
+        <ol class="timeline">
+            @foreach (var entry in (selected.History ?? []).OrderByDescending(h => h.ChangedAt))
+            {
+                <li>
+                    <strong>@entry.Action</strong>
+                    <span class="muted"> · @UserLabel(entry.ChangedBy) · @FormatWhen(entry.ChangedAt)</span>
+                    <div>@entry.Summary</div>
+                </li>
+            }
+        </ol>
+    }
+
+    @if (canManage && collect.PaymentId != "")
+    {
+        <h2 class="mt-4">Record collection</h2>
+        <p class="muted">Remaining on this charge: ₱@(
+            (db.Payments.FirstOrDefault(p => p.PaymentId == collect.PaymentId) is { } live
+                ? PaymentService.Remaining(live)
+                : 0m).ToString("N2")
+        )</p>
+        <EditForm Model="collect" OnValidSubmit="CollectAsync">
+            <div class="form-grid">
+                <div>
+                    <label class="form-label">Amount</label>
+                    <InputNumber class="form-control" @bind-Value="collect.Amount" />
+                </div>
+                <div>
+                    <label class="form-label">Method</label>
+                    <InputSelect class="form-select" @bind-Value="collect.PaymentMethod">
+                        @foreach (var method in PaymentMethods.All)
+                        {
+                            <option value="@method">@PaymentMethods.Label(method)</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Reference</label>
+                    <InputText class="form-control" @bind-Value="collect.ReferenceNumber" />
+                </div>
+                <div class="full">
+                    <label class="form-label">Notes</label>
+                    <InputText class="form-control" @bind-Value="collect.Notes" />
+                </div>
+            </div>
+            <div class="toolbar">
+                <button class="btn btn-primary" type="submit">Save collection</button>
+                <button class="btn btn-outline-secondary" type="button" @onclick="() => collect = new PaymentCollectRequest()">Cancel</button>
+            </div>
+        </EditForm>
+    }
+
+    @if (canManage)
+    {
+        <h2 class="mt-4">@(string.IsNullOrEmpty(form.PaymentId) ? "Add charge" : "Edit charge")</h2>
+        <EditForm Model="form" OnValidSubmit="SaveAsync">
+            <div class="form-grid">
+                <div>
+                    <label class="form-label">Enrollment</label>
+                    <InputSelect class="form-select" @bind-Value="form.EnrollmentId">
+                        <option value="">Select enrollment</option>
+                        @foreach (var enrollment in enrollments)
+                        {
+                            <option value="@enrollment.EnrollmentId">@EnrollmentLabel(enrollment)</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Amount</label>
+                    <InputNumber class="form-control" @bind-Value="form.Amount" />
+                </div>
+                <div>
+                    <label class="form-label">Due date</label>
+                    <input class="form-control" type="date" @bind="dueDateValue" @bind:format="yyyy-MM-dd" />
+                </div>
+                <div>
+                    <label class="form-label">Usual method</label>
+                    <InputSelect class="form-select" @bind-Value="form.PaymentMethod">
+                        @foreach (var method in PaymentMethods.All)
+                        {
+                            <option value="@method">@PaymentMethods.Label(method)</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Reference</label>
+                    <InputText class="form-control" @bind-Value="form.ReferenceNumber" />
+                </div>
+                <div class="full">
+                    <label class="form-label">Notes</label>
+                    <InputText class="form-control" @bind-Value="form.Notes" />
+                </div>
+            </div>
+            <div class="toolbar">
+                <button class="btn btn-primary" type="submit">Save charge</button>
+                @if (!string.IsNullOrEmpty(form.PaymentId))
+                {
+                    <button class="btn btn-outline-secondary" type="button" @onclick="ClearForm">Cancel edit</button>
+                }
+            </div>
+        </EditForm>
+    }
+}
+}
+
+@code {
+    private HirayaDatabase? db;
+    private bool canManage;
+    private string query = "";
+    private string statusFilter = "open";
+    private string studentFilter = "";
+    private string status = "";
+    private string error = "";
+    private decimal openBalance;
+    private int overdueCount;
+    private decimal collectedMonth;
+    private DateTime dueDateValue = DateTime.Today.AddDays(7);
+    private Payment? selected;
+    private PaymentSaveRequest form = new() { Amount = 3500, PaymentMethod = PaymentMethods.Cash };
+    private PaymentCollectRequest collect = new();
+    private List<Student> filterStudents = [];
+    private List<Enrollment> enrollments = [];
+
+    private IEnumerable<(Payment Item, string StudentName, string Period, string Due, string Effective)> Filtered
+    {
+        get
+        {
+            if (db is null) return Array.Empty<(Payment, string, string, string, string)>();
+            var q = query.Trim();
+            return PaymentService.Visible(db, Session.CurrentUser!)
+                .Select(p =>
+                {
+                    var effective = PaymentService.EffectiveStatus(p);
+                    var studentId = PaymentService.ResolveStudentId(db, p);
+                    var enrollment = db.Enrollments.FirstOrDefault(e => e.EnrollmentId == p.EnrollmentId);
+                    var due = PaymentService.DueLocal(p);
+                    return (
+                        Item: p,
+                        StudentName: StudentLabel(studentId),
+                        Period: enrollment == null ? p.EnrollmentId : enrollment.Period,
+                        Due: due?.ToString("MMM d, yyyy") ?? "—",
+                        Effective: effective);
+                })
+                .Where(row =>
+                    string.IsNullOrEmpty(studentFilter) || PaymentService.ResolveStudentId(db, row.Item) == studentFilter)
+                .Where(row =>
+                    string.IsNullOrEmpty(statusFilter)
+                    || (statusFilter == "open" && PaymentStatuses.IsOpen(row.Effective))
+                    || row.Effective == statusFilter
+                    || row.Item.PaymentStatus == statusFilter)
+                .Where(row =>
+                    string.IsNullOrEmpty(q) ||
+                    row.StudentName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    row.Item.ReferenceNumber.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    (row.Item.Notes ?? "").Contains(q, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(row => PaymentStatuses.IsOpen(row.Effective) ? 0 : 1)
+                .ThenBy(row => PaymentService.DueLocal(row.Item) ?? DateTime.MaxValue);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        if (AppExperience.UseMobileUserShell(Session.CurrentUser))
+            return;
+
+        canManage = Navigation.CanManagePayments(Session.CurrentUser?.Role);
+        var view = RouteQuery.Get(Nav, "view");
+        statusFilter = view switch
+        {
+            "overdue" => PaymentStatuses.Overdue,
+            "paid" => PaymentStatuses.Paid,
+            "open" => "open",
+            _ => statusFilter
+        };
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        db = await Repository.LoadAsync();
+        var user = Session.CurrentUser!;
+        var visible = PaymentService.Visible(db, user).ToList();
+        openBalance = visible.Sum(PaymentService.Remaining);
+        overdueCount = visible.Count(p => PaymentService.EffectiveStatus(p) == PaymentStatuses.Overdue);
+        var month = DateTime.Today;
+        collectedMonth = visible
+            .Where(p => DateTime.TryParse(p.PaidAt, out var paid) && paid.ToLocalTime().Year == month.Year && paid.ToLocalTime().Month == month.Month)
+            .Sum(p => p.AmountPaid);
+        if (collectedMonth == 0)
+        {
+            collectedMonth = visible
+                .Where(p => p.PaymentStatus == PaymentStatuses.Paid && DateTime.TryParse(p.PaymentDate, out var paid)
+                            && paid.ToLocalTime().Year == month.Year && paid.ToLocalTime().Month == month.Month)
+                .Sum(p => p.Amount > 0 && p.AmountPaid == 0 ? p.Amount : p.AmountPaid);
+        }
+
+        enrollments = db.Enrollments
+            .Where(e => e.Status is not (EnrollmentStatuses.Cancelled or EnrollmentStatuses.Archived))
+            .OrderByDescending(e => e.EnrollmentDate)
+            .ToList();
+        var ids = visible.Select(p => PaymentService.ResolveStudentId(db, p)).ToHashSet();
+        filterStudents = db.Students.Where(s => ids.Contains(s.StudentId)).OrderBy(StudentNames.Display).ToList();
+        if (selected != null)
+            selected = db.Payments.FirstOrDefault(p => p.PaymentId == selected.PaymentId);
+    }
+
+    private void Select(Payment payment) => selected = payment;
+
+    private void BeginCollect(Payment payment)
+    {
+        selected = payment;
+        collect = new PaymentCollectRequest
+        {
+            PaymentId = payment.PaymentId,
+            Amount = PaymentService.Remaining(payment),
+            PaymentMethod = string.IsNullOrWhiteSpace(payment.PaymentMethod) ? PaymentMethods.Cash : payment.PaymentMethod,
+            ReferenceNumber = payment.ReferenceNumber
+        };
+    }
+
+    private void Edit(Payment payment)
+    {
+        selected = payment;
+        form = new PaymentSaveRequest
+        {
+            PaymentId = payment.PaymentId,
+            EnrollmentId = payment.EnrollmentId,
+            Amount = payment.Amount,
+            PaymentMethod = payment.PaymentMethod,
+            ReferenceNumber = payment.ReferenceNumber,
+            Notes = payment.Notes,
+            DueAt = payment.DueAt
+        };
+        dueDateValue = PaymentService.DueLocal(payment)?.Date ?? DateTime.Today;
+    }
+
+    private void ClearForm()
+    {
+        form = new PaymentSaveRequest { Amount = 3500, PaymentMethod = PaymentMethods.Cash };
+        dueDateValue = DateTime.Today.AddDays(7);
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            form.DueAt = dueDateValue.ToString("yyyy-MM-dd");
+            await PaymentApi.SaveChargeAsync(form, Session.CurrentUser!);
+            status = "Charge saved.";
+            error = "";
+            ClearForm();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            status = "";
+        }
+    }
+
+    private async Task CollectAsync()
+    {
+        try
+        {
+            await PaymentApi.CollectAsync(collect, Session.CurrentUser!);
+            status = "Collection recorded.";
+            error = "";
+            collect = new PaymentCollectRequest();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            status = "";
+        }
+    }
+
+    private async Task MarkPaidAsync(string paymentId)
+    {
+        try
+        {
+            await PaymentApi.MarkPaidAsync(paymentId, Session.CurrentUser!);
+            status = "Marked paid in full.";
+            error = "";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            status = "";
+        }
+    }
+
+    private async Task CancelAsync(string paymentId)
+    {
+        try
+        {
+            await PaymentApi.CancelAsync(paymentId, Session.CurrentUser!);
+            status = "Charge cancelled.";
+            error = "";
+            collect = new PaymentCollectRequest();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            status = "";
+        }
+    }
+
+    private async Task RefundAsync(string paymentId)
+    {
+        try
+        {
+            await PaymentApi.RefundAsync(paymentId, Session.CurrentUser!);
+            status = "Refund recorded.";
+            error = "";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+            status = "";
+        }
+    }
+
+    private string EnrollmentLabel(Enrollment enrollment)
+    {
+        var student = db?.Students.FirstOrDefault(s => s.StudentId == enrollment.StudentId);
+        var name = student == null ? enrollment.StudentId : StudentNames.Display(student);
+        var cls = db?.Classes.FirstOrDefault(c => c.ClassId == enrollment.ClassId)?.Name ?? "";
+        return string.IsNullOrWhiteSpace(cls) ? $"{name} · {enrollment.Period}" : $"{name} · {cls} · {enrollment.Period}";
+    }
+
+    private string StudentLabel(string studentId)
+    {
+        var student = db?.Students.FirstOrDefault(s => s.StudentId == studentId);
+        return student == null ? studentId : StudentNames.Display(student);
+    }
+
+    private string UserLabel(string userId) =>
+        db?.Users.FirstOrDefault(u => u.UserId == userId)?.Fullname ?? userId;
+
+    private static string FormatWhen(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        return DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy") : value;
+    }
+}

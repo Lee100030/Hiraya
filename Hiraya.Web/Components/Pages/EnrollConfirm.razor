@@ -1,0 +1,23 @@
+@page "/enroll/confirm"
+
+<PageTitle>Application received</PageTitle>
+
+<p class="eyebrow">Thank you</p>
+<h1>Application received</h1>
+<p class="lead">Your enrollment request is with the learning center for review. Keep this reference if you contact us.</p>
+
+@if (!string.IsNullOrWhiteSpace(Id))
+{
+    <div class="info-card">
+        <h3>Reference</h3>
+        <p><code>@Id</code></p>
+    </div>
+}
+
+<p>Staff will follow up using the email or phone you provided. Existing families can <a href="/login">log in</a> after an account is issued.</p>
+<p><a class="btn btn-ghost" href="/">Return home</a></p>
+
+@code {
+    [SupplyParameterFromQuery(Name = "id")]
+    public string? Id { get; set; }
+}

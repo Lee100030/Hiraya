@@ -1,0 +1,99 @@
+@page "/admin/roles"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject UserAdminService UsersApi
+@inject NavigationManager Nav
+
+<h1>Roles and permissions</h1>
+<p class="muted">UI hiding is not enough — write operations still check these permissions in services. Only SuperAdmin can change the matrix.</p>
+
+@if (!Navigation.CanAccessAdminPanel(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to role management.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status)) { <p class="ok">@status</p> }
+    @if (!string.IsNullOrEmpty(error)) { <p class="text-danger">@error</p> }
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Permission</th>
+                    @foreach (var role in UserRoles.All)
+                    {
+                        <th>@Navigation.RoleLabel(role)</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var (key, label) in PermissionKeys.All)
+            {
+                <tr>
+                    <td>@label</td>
+                    @foreach (var role in UserRoles.All)
+                    {
+                        var allowed = PermissionCatalog.Allows(db, role, key);
+                        <td>
+                            @if (canEdit && role != UserRoles.SuperAdmin)
+                            {
+                                <input type="checkbox" checked="@allowed" @onchange="e => ToggleAsync(role, key, e)" />
+                            }
+                            else
+                            {
+                                <span>@(allowed ? "Yes" : "No")</span>
+                            }
+                        </td>
+                    }
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private HirayaDatabase? db;
+    private bool canEdit;
+    private string? status;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        if (!Navigation.CanAccessAdminPanel(Session.CurrentUser?.Role))
+            return;
+        canEdit = Navigation.CanManageRoles(Session.CurrentUser?.Role);
+        await Repository.MutateAsync(async data =>
+        {
+            PermissionCatalog.EnsureRows(data);
+            await Task.CompletedTask;
+        });
+        db = await Repository.LoadAsync();
+    }
+
+    private async Task ToggleAsync(string role, string permission, ChangeEventArgs e)
+    {
+        error = null;
+        try
+        {
+            var allowed = e.Value is bool flag ? flag : string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+            await UsersApi.SavePermissionAsync(role, permission, allowed, Session.CurrentUser!);
+            status = "Permission updated.";
+            db = await Repository.LoadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+}

@@ -1,0 +1,49 @@
+@inject SessionService Session
+@inject IHirayaRepository Repository
+
+<h1>Schedule</h1>
+<p class="muted">Official classes for the selected child. Teachers’ private tasks are not shown.</p>
+<FamilyChildPicker Changed="LoadAsync" />
+
+@if (items is null)
+{
+    <FamilyState Mode="loading" />
+}
+else if (items.Count == 0)
+{
+    <FamilyState Message="Nothing scheduled yet." />
+}
+else
+{
+    <div class="record-stack">
+        @foreach (var item in items)
+        {
+            <div class="mobile-card">
+                <p class="eyebrow">@item.Start.ToString("ddd d MMM")</p>
+                <strong>@item.Title</strong>
+                <p class="muted mb-0">
+                    @item.Start.ToString("h:mm tt")–@item.End.ToString("h:mm tt")
+                    · @(string.IsNullOrWhiteSpace(item.Room) ? "Room TBA" : item.Room)
+                </p>
+            </div>
+        }
+    </div>
+}
+
+<p class="mt-3"><a href="calendar">Open calendar</a></p>
+
+@code {
+    private List<CalendarItem>? items;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        if (Session.CurrentUser is null)
+            return;
+        var db = await Repository.LoadAsync();
+        items = FamilyPortal.FamilyCalendar(db, Session.CurrentUser, Session.SelectedStudentId)
+            .Take(40)
+            .ToList();
+    }
+}

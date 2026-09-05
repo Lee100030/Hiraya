@@ -1,0 +1,204 @@
+@page "/parents"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject UserAdminService UsersApi
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<h1>Parents / guardians</h1>
+
+@if (!Navigation.CanManageStudents(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status)) { <p class="ok">@status</p> }
+    @if (!string.IsNullOrEmpty(error)) { <p class="text-danger">@error</p> }
+
+    <div class="toolbar">
+        <input class="form-control" placeholder="Search name, email, or phone" @bind="query" @bind:event="oninput" />
+        <select class="form-select" @bind="statusFilter">
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="archived">Archived</option>
+        </select>
+    </div>
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Guardian</th>
+                    <th>Contact</th>
+                    <th>Students</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            @if (!Filtered.Any())
+            {
+                <tr><td colspan="5" class="muted">No guardians match the current filters.</td></tr>
+            }
+            @foreach (var parent in Filtered)
+            {
+                <tr>
+                    <td>@parent.Fullname<div class="muted">@parent.Email</div></td>
+                    <td>@(parent.Phone ?? "—")</td>
+                    <td>@ChildrenOf(parent.UserId)</td>
+                    <td>@(string.IsNullOrWhiteSpace(parent.Status) ? "active" : parent.Status)</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Edit(parent)">Edit</button>
+                        @if (string.Equals(parent.Status, "archived", StringComparison.OrdinalIgnoreCase))
+                        {
+                            <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => RestoreAsync(parent.UserId)">Restore</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => ArchiveAsync(parent.UserId)">Archive</button>
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+
+    <h2 class="mt-4">@(string.IsNullOrEmpty(form.UserId) ? "Add guardian" : "Edit guardian")</h2>
+    <EditForm Model="form" OnValidSubmit="SaveAsync">
+        <div class="form-grid">
+            <div><label class="form-label">First name</label><InputText class="form-control" @bind-Value="form.FirstName" /></div>
+            <div><label class="form-label">Last name</label><InputText class="form-control" @bind-Value="form.LastName" /></div>
+            <div><label class="form-label">Email</label><InputText class="form-control" @bind-Value="form.Email" /></div>
+            <div><label class="form-label">Phone</label><InputText class="form-control" @bind-Value="form.Phone" /></div>
+            <div class="full"><label class="form-label">Address</label><InputText class="form-control" @bind-Value="form.Address" /></div>
+            <div class="full">
+                <label class="form-label">Password @(string.IsNullOrEmpty(form.UserId) ? "(required)" : "(optional)")</label>
+                <input class="form-control" type="password" @bind="form.Password" />
+            </div>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit">Save</button>
+        <button class="btn btn-link mt-3" type="button" @onclick="Clear">Clear</button>
+    </EditForm>
+}
+
+@code {
+    private HirayaDatabase? db;
+    private string? status;
+    private string? error;
+    private string query = "";
+    private string statusFilter = "active";
+    private UserAdminSaveRequest form = NewForm();
+
+    private IEnumerable<HirayaUser> Filtered
+    {
+        get
+        {
+            if (db is null) return Array.Empty<HirayaUser>();
+            var q = query.Trim();
+            return db.Users
+                .Where(u => u.Role == UserRoles.Parent)
+                .Where(u => string.IsNullOrEmpty(statusFilter) ||
+                            string.Equals(string.IsNullOrWhiteSpace(u.Status) ? "active" : u.Status, statusFilter, StringComparison.OrdinalIgnoreCase))
+                .Where(u => string.IsNullOrEmpty(q) ||
+                            u.Fullname.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                            (u.Email?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                            (u.Phone?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false))
+                .OrderBy(u => u.Fullname);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        if (!Navigation.CanManageStudents(Session.CurrentUser?.Role))
+            return;
+        db = await Repository.LoadAsync();
+    }
+
+    private string ChildrenOf(string parentId)
+    {
+        if (db is null) return "—";
+        var names = db.Students.Where(s => s.ParentId == parentId).Select(StudentNames.Display).ToList();
+        return names.Count == 0 ? "—" : string.Join(", ", names);
+    }
+
+    private void Edit(HirayaUser user)
+    {
+        form = new UserAdminSaveRequest
+        {
+            UserId = user.UserId,
+            FirstName = user.FirstName,
+            LastName = user.LastName,
+            Email = user.Email,
+            Phone = user.Phone ?? "",
+            Address = user.Address,
+            Role = UserRoles.Parent,
+            Status = user.Status
+        };
+    }
+
+    private void Clear() => form = NewForm();
+
+    private async Task SaveAsync()
+    {
+        error = null;
+        form.Role = UserRoles.Parent;
+        if (string.IsNullOrWhiteSpace(form.Status))
+            form.Status = "active";
+        try
+        {
+            await UsersApi.SaveAsync(form, Session.CurrentUser!);
+            status = "Guardian saved.";
+            Clear();
+            db = await Repository.LoadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task ArchiveAsync(string userId)
+    {
+        error = null;
+        if (!await JS.InvokeAsync<bool>("confirm", "Archive this guardian? They will not be able to sign in. Linked student history stays in the system."))
+            return;
+        try
+        {
+            await UsersApi.SetActiveAsync(userId, false, Session.CurrentUser!);
+            status = "Guardian archived.";
+            db = await Repository.LoadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task RestoreAsync(string userId)
+    {
+        error = null;
+        try
+        {
+            await UsersApi.SetActiveAsync(userId, true, Session.CurrentUser!);
+            status = "Guardian restored.";
+            db = await Repository.LoadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private static UserAdminSaveRequest NewForm() => new() { Role = UserRoles.Parent, Status = "active" };
+}

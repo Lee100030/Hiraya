@@ -1,0 +1,228 @@
+@page "/admin/users"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject UserAdminService UsersApi
+@inject NavigationManager Nav
+
+<h1>Users</h1>
+<p class="muted">Administrators cannot edit SuperAdmin accounts unless they are SuperAdmin.</p>
+
+@if (!Navigation.CanManageUsers(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to user management.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status)) { <p class="ok">@status</p> }
+    @if (!string.IsNullOrEmpty(error)) { <p class="text-danger">@error</p> }
+
+    <div class="toolbar">
+        <input class="form-control" placeholder="Search name, email, username" @bind="query" @bind:event="oninput" />
+        <select class="form-select" @bind="roleFilter">
+            <option value="">All roles</option>
+            @foreach (var value in UserRoles.All)
+            {
+                <option value="@value">@Navigation.RoleLabel(value)</option>
+            }
+        </select>
+    </div>
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Last login</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var user in Filtered)
+            {
+                <tr>
+                    <td>@user.Fullname<div class="muted">@user.Email</div></td>
+                    <td>@Navigation.RoleLabel(user.Role)</td>
+                    <td>@user.Status</td>
+                    <td>@FormatWhen(user.LastLoginAt)</td>
+                    <td>
+                        @if (Navigation.CanAdministerAccount(Session.CurrentUser?.Role, user.Role))
+                        {
+                            <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Edit(user)">Edit</button>
+                            @if (string.Equals(user.Status, "active", StringComparison.OrdinalIgnoreCase))
+                            {
+                                <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => SetActiveAsync(user.UserId, false)">Archive</button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => SetActiveAsync(user.UserId, true)">Restore</button>
+                            }
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+
+    <h2 class="mt-4">@(string.IsNullOrEmpty(form.UserId) ? "Create user" : "Edit user")</h2>
+    <EditForm Model="form" OnValidSubmit="SaveAsync">
+        <div class="form-grid">
+            <div><label class="form-label">First name</label><InputText class="form-control" @bind-Value="form.FirstName" /></div>
+            <div><label class="form-label">Middle name</label><InputText class="form-control" @bind-Value="form.MiddleName" /></div>
+            <div><label class="form-label">Last name</label><InputText class="form-control" @bind-Value="form.LastName" /></div>
+            <div><label class="form-label">Username</label><InputText class="form-control" @bind-Value="form.Username" /></div>
+            <div><label class="form-label">Email</label><InputText class="form-control" @bind-Value="form.Email" /></div>
+            <div><label class="form-label">Phone</label><InputText class="form-control" @bind-Value="form.Phone" /></div>
+            <div class="full"><label class="form-label">Address</label><InputText class="form-control" @bind-Value="form.Address" /></div>
+            <div><label class="form-label">Position</label><InputText class="form-control" @bind-Value="form.Position" /></div>
+            <div>
+                <label class="form-label">Role</label>
+                <InputSelect class="form-select" @bind-Value="form.Role">
+                    @foreach (var value in AssignableRoles)
+                    {
+                        <option value="@value">@Navigation.RoleLabel(value)</option>
+                    }
+                </InputSelect>
+            </div>
+            <div>
+                <label class="form-label">Status</label>
+                <InputSelect class="form-select" @bind-Value="form.Status">
+                    <option value="active">active</option>
+                    <option value="inactive">inactive</option>
+                </InputSelect>
+            </div>
+            <div class="full">
+                <label class="form-label">Password @(string.IsNullOrEmpty(form.UserId) ? "(required)" : "(leave blank to keep)")</label>
+                <input class="form-control" type="password" @bind="form.Password" />
+            </div>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit">Save user</button>
+        <button class="btn btn-link mt-3" type="button" @onclick="Clear">Clear</button>
+        @if (!string.IsNullOrEmpty(form.UserId))
+        {
+            <div class="toolbar">
+                <input class="form-control" type="password" placeholder="Temporary password" @bind="resetPassword" />
+                <button class="btn btn-outline-secondary" type="button" @onclick="ResetAsync">Reset password</button>
+            </div>
+        }
+    </EditForm>
+}
+
+@code {
+    private HirayaDatabase? db;
+    private string query = "";
+    private string roleFilter = "";
+    private string? status;
+    private string? error;
+    private string resetPassword = "";
+    private UserAdminSaveRequest form = new();
+
+    private IEnumerable<HirayaUser> Filtered =>
+        db is null
+            ? Array.Empty<HirayaUser>()
+            : db.Users
+                .Where(u => string.IsNullOrEmpty(roleFilter) || u.Role == roleFilter)
+                .Where(u =>
+                    string.IsNullOrWhiteSpace(query) ||
+                    (u.Fullname ?? "").Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    (u.Email ?? "").Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    (u.Username ?? "").Contains(query, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(u => u.Fullname);
+
+    private IEnumerable<string> AssignableRoles =>
+        UserRoles.All.Where(r => Navigation.CanAssignRole(Session.CurrentUser?.Role, r));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        if (!Navigation.CanManageUsers(Session.CurrentUser?.Role))
+            return;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync() => db = await Repository.LoadAsync();
+
+    private void Edit(HirayaUser user)
+    {
+        form = new UserAdminSaveRequest
+        {
+            UserId = user.UserId,
+            FirstName = user.FirstName,
+            MiddleName = user.MiddleName,
+            LastName = user.LastName,
+            Username = user.Username,
+            Email = user.Email,
+            Phone = user.Phone ?? "",
+            Address = user.Address,
+            Position = user.Position,
+            Role = user.Role,
+            Status = user.Status,
+            Password = ""
+        };
+        error = null;
+    }
+
+    private void Clear() => form = new UserAdminSaveRequest { Role = UserRoles.Staff };
+
+    private async Task SaveAsync()
+    {
+        error = null;
+        try
+        {
+            await UsersApi.SaveAsync(form, Session.CurrentUser!);
+            status = "User saved.";
+            Clear();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task SetActiveAsync(string userId, bool active)
+    {
+        error = null;
+        try
+        {
+            await UsersApi.SetActiveAsync(userId, active, Session.CurrentUser!);
+            status = active ? "User activated." : "User deactivated.";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task ResetAsync()
+    {
+        error = null;
+        try
+        {
+            await UsersApi.ResetPasswordAsync(form.UserId, resetPassword, Session.CurrentUser!);
+            resetPassword = "";
+            status = "Password reset.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private static string FormatWhen(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        return DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy h:mm tt") : value;
+    }
+}

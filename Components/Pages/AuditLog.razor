@@ -1,0 +1,100 @@
+@page "/audit"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+
+<h1>Audit log</h1>
+<p class="muted">Who changed what. Sign-in, student, enrollment, attendance, payments, and other writes are recorded. Oldest entries drop after 500.</p>
+
+@if (!Navigation.CanViewAudit(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="toolbar">
+        <input class="form-control" placeholder="Search actor, action, or summary" @bind="query" @bind:event="oninput" />
+        <select class="form-select" @bind="moduleFilter">
+            <option value="">All modules</option>
+            @foreach (var module in AuditModules.All)
+            {
+                <option value="@module">@AuditModules.Label(module)</option>
+            }
+        </select>
+        <a class="btn btn-outline-secondary" href="reports">Reports</a>
+    </div>
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>When</th>
+                    <th>Actor</th>
+                    <th>Module</th>
+                    <th>Action</th>
+                    <th>Summary</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!Filtered.Any())
+                {
+                    <tr><td colspan="5" class="muted">No audit entries match the current filters.</td></tr>
+                }
+                @foreach (var entry in Filtered)
+                {
+                    <tr>
+                        <td>@FormatWhen(entry.CreatedAt)</td>
+                        <td>@(string.IsNullOrWhiteSpace(entry.ActorName) ? entry.ActorId : entry.ActorName)</td>
+                        <td>@AuditModules.Label(entry.Module)</td>
+                        <td>@entry.Action</td>
+                        <td>@entry.Summary<div class="muted">@entry.EntityType @entry.EntityId</div></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private HirayaDatabase? db;
+    private string query = "";
+    private string moduleFilter = "";
+
+    private IEnumerable<AuditLogEntry> Filtered
+    {
+        get
+        {
+            if (db is null) return Array.Empty<AuditLogEntry>();
+            var q = query.Trim();
+            return AuditService.Visible(db)
+                .Where(a => string.IsNullOrEmpty(moduleFilter) || a.Module == moduleFilter)
+                .Where(a =>
+                    string.IsNullOrEmpty(q) ||
+                    a.ActorName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    a.Action.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    a.Summary.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    a.EntityId.Contains(q, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        db = await Repository.LoadAsync();
+    }
+
+    private static string FormatWhen(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        return DateTime.TryParse(value, out var when) ? when.ToLocalTime().ToString("MMM d, yyyy h:mm tt") : value;
+    }
+}

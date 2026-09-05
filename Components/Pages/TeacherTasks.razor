@@ -1,0 +1,172 @@
+@page "/tasks"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject ScheduleService ScheduleApi
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<h1>Weekly teaching tasks</h1>
+<p class="muted">Personal preparation work. This is not the official class schedule, which only an administrator can change.</p>
+
+@if (Session.CurrentUser?.Role != UserRoles.Teacher && !UserRoles.IsAdmin(Session.CurrentUser?.Role))
+{
+    <p>Only teachers can manage weekly tasks.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status)) { <p class="ok">@status</p> }
+    @if (!string.IsNullOrEmpty(error)) { <p class="text-danger">@error</p> }
+
+    @if (tasks.Count == 0)
+    {
+        <p class="muted">No tasks yet. Add something like “Prepare learning materials for Monday class.”</p>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>When</th>
+                        <th>Task</th>
+                        <th>Notes</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var task in tasks)
+                {
+                    <tr>
+                        <td>@FormatWhen(task)</td>
+                        <td>@task.Title</td>
+                        <td>@(string.IsNullOrWhiteSpace(task.Notes) ? "—" : task.Notes)</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => Edit(task)">Edit</button>
+                            <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => DeleteAsync(task.ScheduleId)">Delete</button>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <h2 class="mt-4">@(string.IsNullOrEmpty(form.ScheduleId) ? "Add task" : "Edit task")</h2>
+    <EditForm Model="form" OnValidSubmit="SaveAsync">
+        <div class="form-grid">
+            <div class="full">
+                <label class="form-label">Title</label>
+                <InputText class="form-control" @bind-Value="form.Title" />
+            </div>
+            <div>
+                <label class="form-label">Start</label>
+                <InputDate class="form-control" Type="InputDateType.DateTimeLocal" @bind-Value="form.Start" />
+            </div>
+            <div>
+                <label class="form-label">End</label>
+                <InputDate class="form-control" Type="InputDateType.DateTimeLocal" @bind-Value="form.End" />
+            </div>
+            <div class="full">
+                <label class="form-label">Notes</label>
+                <InputTextArea class="form-control" @bind-Value="form.Notes" />
+            </div>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit">Save task</button>
+        <button class="btn btn-link mt-3" type="button" @onclick="Clear">Clear</button>
+    </EditForm>
+}
+
+@code {
+    private HirayaDatabase? db;
+    private string? status;
+    private string? error;
+    private ScheduleSaveRequest form = NewForm();
+    private List<Schedule> tasks = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        db = await Repository.LoadAsync();
+        var user = Session.CurrentUser!;
+        tasks = db.Schedules
+            .Where(s => s.Kind == ScheduleKinds.TeacherTask)
+            .Where(s => UserRoles.IsAdmin(user.Role) || s.TeacherId == user.UserId)
+            .OrderBy(s => s.StartAt)
+            .ToList();
+    }
+
+    private void Edit(Schedule item)
+    {
+        ScheduleService.TryRange(item.StartAt, item.EndAt, out var start, out var end);
+        form = new ScheduleSaveRequest
+        {
+            ScheduleId = item.ScheduleId,
+            Title = item.Title,
+            Start = start == default ? DateTime.Today.AddHours(16) : start,
+            End = end == default ? DateTime.Today.AddHours(17) : end,
+            Notes = item.Notes,
+            Status = item.Status
+        };
+    }
+
+    private void Clear() => form = NewForm();
+
+    private async Task SaveAsync()
+    {
+        error = null;
+        try
+        {
+            await ScheduleApi.SaveTeacherTaskAsync(form, Session.CurrentUser!);
+            status = "Task saved.";
+            Clear();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task DeleteAsync(string id)
+    {
+        error = null;
+        try
+        {
+            if (!await JS.InvokeAsync<bool>("confirm", "Remove this teaching task?"))
+                return;
+            await ScheduleApi.DeleteTeacherTaskAsync(id, Session.CurrentUser!);
+            status = "Task removed.";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private static string FormatWhen(Schedule item)
+    {
+        return ScheduleService.TryRange(item.StartAt, item.EndAt, out var start, out _)
+            ? start.ToString("ddd d MMM, h:mm tt")
+            : item.StartAt;
+    }
+
+    private static ScheduleSaveRequest NewForm()
+    {
+        var start = DateTime.Today.AddHours(16);
+        return new ScheduleSaveRequest { Title = "", Start = start, End = start.AddHours(1), Status = "confirmed" };
+    }
+}

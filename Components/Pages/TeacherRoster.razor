@@ -1,0 +1,77 @@
+@page "/roster"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject NavigationManager Nav
+
+<h1>Assigned students</h1>
+<p class="muted">Students in your classes. You can record attendance and progress, but you cannot edit family records.</p>
+
+@if (Session.CurrentUser?.Role != UserRoles.Teacher && !Navigation.CanAccessAdminPanel(Session.CurrentUser?.Role))
+{
+    <p>This roster is for teachers.</p>
+}
+else if (rows is null)
+{
+    <p>Loading…</p>
+}
+else if (rows.Count == 0)
+{
+    <p class="muted">No students are assigned to your classes yet.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Student</th>
+                    <th>Program</th>
+                    <th>Class</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var row in rows)
+            {
+                <tr>
+                    <td>@row.Name</td>
+                    <td>@row.Program</td>
+                    <td>@row.ClassName</td>
+                    <td>@row.Status</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<(string Name, string Program, string ClassName, string Status)>? rows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        var db = await Repository.LoadAsync();
+        var user = Session.CurrentUser!;
+        var ids = ProgressService.AssignedStudentIds(db, user.UserId);
+        rows = db.Students.Where(s => ids.Contains(s.StudentId))
+            .OrderBy(StudentNames.Display)
+            .Select(s =>
+            {
+                var enrollment = db.Enrollments.FirstOrDefault(e =>
+                    e.StudentId == s.StudentId && EnrollmentStatuses.CountsTowardCapacity(e.Status));
+                var cls = db.Classes.FirstOrDefault(c => c.ClassId == enrollment?.ClassId);
+                return (
+                    StudentNames.Display(s),
+                    string.IsNullOrWhiteSpace(s.Program) ? "—" : s.Program,
+                    cls?.Name ?? "—",
+                    string.IsNullOrWhiteSpace(s.Status) ? "active" : s.Status);
+            })
+            .ToList();
+    }
+}

@@ -1,0 +1,81 @@
+@inject SessionService Session
+@inject ProfilePhotoService Photos
+@inject IHirayaRepository Repository
+@implements IDisposable
+
+@if (user is not null)
+{
+    <a class="@CssClass" href="settings/profile" title="Open profile">
+        @if (!string.IsNullOrEmpty(photo))
+        {
+            <img src="@photo" alt="" />
+        }
+        else
+        {
+            <span class="sidebar-user-initials">@Initials(user)</span>
+        }
+        @if (!Compact)
+        {
+            <span class="sidebar-user-text">
+                <strong>@DisplayName(user)</strong>
+                <small>@Navigation.RoleLabel(user.Role)</small>
+            </span>
+        }
+    </a>
+}
+
+@code {
+    [Parameter] public bool Compact { get; set; }
+    [Parameter] public string CssClass { get; set; } = "sidebar-user";
+
+    private HirayaUser? user;
+    private string? photo;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+        await LoadAsync();
+    }
+
+    private void OnSessionChanged() => _ = InvokeAsync(LoadAsync);
+
+    private async Task LoadAsync()
+    {
+        if (Session.CurrentUser is null)
+        {
+            user = null;
+            photo = null;
+            return;
+        }
+
+        var db = await Repository.LoadAsync();
+        user = db.Users.FirstOrDefault(u => u.UserId == Session.CurrentUser.UserId) ?? Session.CurrentUser;
+        photo = Photos.ToDataUrl(user.ProfileImagePath);
+        StateHasChanged();
+    }
+
+    private static string DisplayName(HirayaUser person)
+    {
+        if (!string.IsNullOrWhiteSpace(person.Fullname))
+            return person.Fullname;
+        var parts = string.Join(" ", new[] { person.FirstName, person.LastName }.Where(p => !string.IsNullOrWhiteSpace(p)));
+        return string.IsNullOrWhiteSpace(parts) ? person.Email : parts;
+    }
+
+    private static string Initials(HirayaUser person)
+    {
+        var first = (person.FirstName ?? "").Trim();
+        var last = (person.LastName ?? "").Trim();
+        if (first.Length > 0 && last.Length > 0)
+            return $"{char.ToUpperInvariant(first[0])}{char.ToUpperInvariant(last[0])}";
+        var name = DisplayName(person).Trim();
+        if (name.Length == 0)
+            return "U";
+        var space = name.IndexOf(' ');
+        if (space > 0 && space + 1 < name.Length)
+            return $"{char.ToUpperInvariant(name[0])}{char.ToUpperInvariant(name[space + 1])}";
+        return char.ToUpperInvariant(name[0]).ToString();
+    }
+
+    public void Dispose() => Session.Changed -= OnSessionChanged;
+}

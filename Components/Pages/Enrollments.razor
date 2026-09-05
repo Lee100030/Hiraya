@@ -1,0 +1,361 @@
+@page "/enrollment"
+@inject SessionService Session
+@inject IHirayaRepository Repository
+@inject EnrollmentService EnrollmentApi
+@inject NavigationManager Nav
+
+<h1>Enrollment</h1>
+
+@if (!Navigation.CanViewEnrollment(Session.CurrentUser?.Role))
+{
+    <p>You do not have access to this module.</p>
+}
+else if (db is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(status))
+    {
+        <p class="ok">@status</p>
+    }
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="text-danger">@error</p>
+    }
+
+    @if (canManage && applications.Count > 0)
+    {
+        <h2>Applications</h2>
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Student</th>
+                        <th>Parent</th>
+                        <th>Preferred program</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var app in applications)
+                    {
+                        <tr>
+                            <td>@app.StudentFullname<div class="muted">Age @app.StudentAge</div></td>
+                            <td>@app.ParentFullname<div class="muted">@app.ParentEmail</div></td>
+                            <td>@app.PreferredProgram</td>
+                            <td>@app.Status</td>
+                            <td>
+                                @if (app.Status == "pending_review")
+                                {
+                                    <select class="form-select mb-2"
+                                            value="@GetApproveClass(app.ApplicationId)"
+                                            @onchange="e => SetApproveClass(app.ApplicationId, e.Value?.ToString())">
+                                        <option value="">Assign class (optional)</option>
+                                        @foreach (var item in ActiveClasses())
+                                        {
+                                            <option value="@item.ClassId">@item.Name</option>
+                                        }
+                                    </select>
+                                    <button class="btn btn-sm btn-primary" type="button" @onclick="() => ApproveAsync(app.ApplicationId)">Approve</button>
+                                    <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => RejectAsync(app.ApplicationId)">Reject</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <h2 class="mt-4">Enrollment records</h2>
+    <div class="toolbar">
+        <input class="form-control" placeholder="Search student or period" @bind="query" @bind:event="oninput" />
+        <select class="form-select" @bind="statusFilter">
+            <option value="">All statuses</option>
+            @foreach (var value in EnrollmentStatuses.All)
+            {
+                <option value="@value">@value</option>
+            }
+        </select>
+        <select class="form-select" @bind="classFilter">
+            <option value="">All classes</option>
+            @foreach (var item in db.Classes.OrderBy(c => c.Name))
+            {
+                <option value="@item.ClassId">@item.Name</option>
+            }
+        </select>
+    </div>
+
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Student</th>
+                    <th>Class</th>
+                    <th>Period</th>
+                    <th>Status</th>
+                    @if (canManage)
+                    {
+                        <th></th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @if (!Filtered.Any())
+                {
+                    <tr><td colspan="@(canManage ? 5 : 4)" class="muted">No enrollments match the current filters.</td></tr>
+                }
+                @foreach (var row in Filtered)
+                {
+                    <tr>
+                        <td>@row.StudentName</td>
+                        <td>@row.ClassName</td>
+                        <td>@row.Item.Period</td>
+                        <td>@row.Item.Status</td>
+                        @if (canManage)
+                        {
+                            <td>
+                                <select class="form-select" @onchange="e => ChangeStatusAsync(row.Item.EnrollmentId, e.Value?.ToString())">
+                                    @foreach (var value in EnrollmentStatuses.All)
+                                    {
+                                        if (value == row.Item.Status)
+                                        {
+                                            <option value="@value" selected>@value</option>
+                                        }
+                                        else
+                                        {
+                                            <option value="@value">@value</option>
+                                        }
+                                    }
+                                </select>
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (canManage)
+    {
+        <h2 class="mt-4">Enroll a student</h2>
+        <EditForm Model="form" OnValidSubmit="EnrollAsync">
+            <div class="form-grid">
+                <div>
+                    <label class="form-label">Student</label>
+                    <InputSelect class="form-select" @bind-Value="form.StudentId">
+                        <option value="">—</option>
+                        @foreach (var student in db.Students.OrderBy(s => StudentNames.Display(s)))
+                        {
+                            <option value="@student.StudentId">@StudentNames.Display(student)</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Class</label>
+                    <InputSelect class="form-select" @bind-Value="form.ClassId">
+                        <option value="">—</option>
+                        @foreach (var item in ActiveClasses())
+                        {
+                            <option value="@item.ClassId">@item.Name</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div>
+                    <label class="form-label">Learning period</label>
+                    <InputText class="form-control" @bind-Value="form.Period" />
+                </div>
+                <div>
+                    <label class="form-label">Status</label>
+                    <InputSelect class="form-select" @bind-Value="form.Status">
+                        <option value="@EnrollmentStatuses.Pending">pending</option>
+                        <option value="@EnrollmentStatuses.Active">active</option>
+                    </InputSelect>
+                </div>
+            </div>
+            <button class="btn btn-primary mt-3" type="submit">Save enrollment</button>
+        </EditForm>
+    }
+}
+
+@code {
+    private HirayaDatabase? db;
+    private bool canManage;
+    private string query = "";
+    private string statusFilter = "";
+    private string classFilter = "";
+    private string? status;
+    private string? error;
+    private List<EnrollmentApplication> applications = [];
+    private Dictionary<string, string> approveClassByApp = new();
+    private EnrollForm form = new();
+
+    private IEnumerable<LearningClass> ActiveClasses()
+    {
+        if (db is null) return Array.Empty<LearningClass>();
+        return db.Classes
+            .Where(c => !string.Equals(c.Status, "archived", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(c => c.Name);
+    }
+
+    private IEnumerable<EnrollmentRow> Filtered
+    {
+        get
+        {
+            if (db is null) return Array.Empty<EnrollmentRow>();
+            return VisibleEnrollments()
+                .Where(e => string.IsNullOrEmpty(statusFilter) || e.Status == statusFilter)
+                .Where(e => string.IsNullOrEmpty(classFilter) || e.ClassId == classFilter)
+                .Select(e => new EnrollmentRow(e, StudentLabel(e.StudentId), ClassLabel(e.ClassId)))
+                .Where(r =>
+                    string.IsNullOrWhiteSpace(query) ||
+                    r.StudentName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    r.ClassName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    r.Item.Period.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(r => r.Item.EnrollmentDate);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsLoggedIn)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        canManage = Navigation.CanManageEnrollment(Session.CurrentUser?.Role);
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        db = await Repository.LoadAsync();
+        applications = db.EnrollmentApplications.OrderByDescending(a => a.SubmittedAt).ToList();
+        foreach (var app in applications.Where(a => a.Status == "pending_review"))
+            approveClassByApp.TryAdd(app.ApplicationId, MatchClass(app.PreferredProgram));
+        if (string.IsNullOrWhiteSpace(form.Period))
+            form.Period = DefaultPeriod();
+    }
+
+    private IEnumerable<Hiraya.Shared.Models.Enrollment> VisibleEnrollments()
+    {
+        if (db is null) return Array.Empty<Hiraya.Shared.Models.Enrollment>();
+        var user = Session.CurrentUser!;
+        IEnumerable<Hiraya.Shared.Models.Enrollment> queryable = db.Enrollments;
+        if (user.Role == UserRoles.Parent)
+        {
+            var kids = db.Students.Where(s => s.ParentId == user.UserId).Select(s => s.StudentId).ToHashSet();
+            queryable = queryable.Where(e => kids.Contains(e.StudentId));
+        }
+        else if (user.Role == UserRoles.Teacher)
+        {
+            var classIds = db.Classes.Where(c => c.TeacherId == user.UserId).Select(c => c.ClassId).ToHashSet();
+            queryable = queryable.Where(e => classIds.Contains(e.ClassId) || e.TeacherId == user.UserId);
+        }
+
+        return queryable;
+    }
+
+    private string StudentLabel(string studentId)
+    {
+        var student = db?.Students.FirstOrDefault(s => s.StudentId == studentId);
+        return student == null ? studentId : StudentNames.Display(student);
+    }
+
+    private string ClassLabel(string classId) =>
+        db?.Classes.FirstOrDefault(c => c.ClassId == classId)?.Name ?? (string.IsNullOrEmpty(classId) ? "Unassigned" : classId);
+
+    private string MatchClass(string preferred)
+    {
+        var match = ActiveClasses().FirstOrDefault(c =>
+            string.Equals(c.Name, preferred, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(ClassService.ProgramName(db!, c.ProgramId), preferred, StringComparison.OrdinalIgnoreCase));
+        return match?.ClassId ?? "";
+    }
+
+    private string GetApproveClass(string applicationId) =>
+        approveClassByApp.GetValueOrDefault(applicationId) ?? "";
+
+    private void SetApproveClass(string applicationId, string? classId) =>
+        approveClassByApp[applicationId] = classId ?? "";
+
+    private async Task ApproveAsync(string applicationId)
+    {
+        error = null;
+        try
+        {
+            approveClassByApp.TryGetValue(applicationId, out var classId);
+            await EnrollmentApi.ApproveApplicationAsync(applicationId, Session.CurrentUser!.UserId, classId);
+            status = "Application approved. Student and enrollment created.";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task RejectAsync(string applicationId)
+    {
+        await EnrollmentApi.RejectApplicationAsync(applicationId);
+        status = "Application rejected.";
+        await ReloadAsync();
+    }
+
+    private async Task ChangeStatusAsync(string enrollmentId, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        error = null;
+        try
+        {
+            await EnrollmentApi.SetEnrollmentStatusAsync(enrollmentId, value, Session.CurrentUser!.UserId);
+            status = "Enrollment status updated.";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task EnrollAsync()
+    {
+        error = null;
+        try
+        {
+            await EnrollmentApi.EnrollStudentAsync(
+                form.StudentId,
+                form.ClassId,
+                form.Period,
+                Session.CurrentUser!.UserId,
+                form.Status);
+            status = "Enrollment saved.";
+            form = new EnrollForm { Period = DefaultPeriod(), Status = EnrollmentStatuses.Pending };
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private static string DefaultPeriod()
+    {
+        var year = DateTime.Today.Month >= 6 ? DateTime.Today.Year : DateTime.Today.Year - 1;
+        return $"{year}–{year + 1}";
+    }
+
+    private sealed class EnrollForm
+    {
+        public string StudentId { get; set; } = "";
+        public string ClassId { get; set; } = "";
+        public string Period { get; set; } = "";
+        public string Status { get; set; } = EnrollmentStatuses.Pending;
+    }
+
+    private sealed record EnrollmentRow(Hiraya.Shared.Models.Enrollment Item, string StudentName, string ClassName);
+}
